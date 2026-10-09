@@ -88,6 +88,7 @@
 #include "slic3r/Utils/PresetUpdater.hpp"
 #include "slic3r/plugin/PluginConfig.hpp"
 #include "slic3r/plugin/PluginManager.hpp"
+#include "PartPlate.hpp"
 #include "Plater.hpp"
 #include "ParamsDialog.hpp"
 #include "MainFrame.hpp"
@@ -3335,6 +3336,60 @@ void toggle_pinned_print_option(const std::string& opt_key)
     wxGetApp().app_config->set(PINNED_PRINT_OPTIONS_KEY, boost::algorithm::join(keys, ";"));
     if (auto* tab = dynamic_cast<TabPrint*>(wxGetApp().get_tab(Preset::TYPE_PRINT)))
         tab->update_pinned_page();
+}
+
+wxString get_value_source_text(const DynamicPrintConfig* config, const std::string& opt_key)
+{
+    const std::string key = opt_key.substr(0, opt_key.find('#'));
+    Tab*              tab = nullptr;
+    for (Preset::Type type : {Preset::TYPE_PRINT, Preset::TYPE_FILAMENT, Preset::TYPE_PRINTER})
+        if (Tab* t = wxGetApp().get_tab(type); t != nullptr && t->get_presets() != nullptr && t->get_config() == config)
+            tab = t;
+    if (tab == nullptr || config == nullptr || !config->has(key))
+        return {};
+
+    const PresetCollection& presets = *tab->get_presets();
+    const Preset&           saved   = presets.get_selected_preset();
+    const Preset*           system  = saved.is_system ? &saved : presets.get_selected_preset_parent();
+    auto differs = [&key](const DynamicPrintConfig& a, const DynamicPrintConfig& b) {
+        return a.has(key) && b.has(key) && *a.option(key) != *b.option(key);
+    };
+    // " (label: value)", left out for long values such as custom G-code.
+    auto value_note = [&key](const wxString& label, const DynamicPrintConfig& cfg) -> wxString {
+        const std::string value = cfg.has(key) ? cfg.opt_serialize(key) : std::string();
+        if (value.empty() || value.size() > 40 || value.find('\n') != std::string::npos)
+            return {};
+        return " (" + label + ": " + from_u8(value) + ")";
+    };
+
+    wxString text;
+    if (differs(*config, saved.config))
+        text = _L("Value from: unsaved change") + value_note(_L("saved value"), saved.config);
+    else if (system == nullptr)
+        text = format_wxstr(_L("Value from: preset \"%1%\""), saved.name);
+    else if (system != &saved && differs(saved.config, system->config))
+        text = format_wxstr(_L("Value from: your preset \"%1%\""), saved.name) + value_note(_L("system value"), system->config);
+    else
+        text = format_wxstr(_L("Value from: system preset \"%1%\""), system->name);
+
+    if (tab->type() == Preset::TYPE_PRINT) {
+        PartPlateList& plates = wxGetApp().plater()->get_partplate_list();
+        for (int i = 0; i < plates.get_plate_count(); ++i)
+            if (const DynamicPrintConfig* plate_config = plates.get_plate(i)->config(); plate_config->has(key))
+                text += "\n" + format_wxstr(_L("Overridden on plate %1%"), i + 1) + value_note(_L("value"), *plate_config);
+        size_t objects = 0;
+        for (const ModelObject* object : wxGetApp().model().objects) {
+            bool overridden = object->config.has(key);
+            for (const ModelVolume* volume : object->volumes)
+                overridden = overridden || volume->config.has(key);
+            for (const auto& range : object->layer_config_ranges)
+                overridden = overridden || range.second.has(key);
+            objects += overridden ? 1 : 0;
+        }
+        if (objects > 0)
+            text += "\n" + format_wxstr(_L_PLURAL("Overridden on %1% object", "Overridden on %1% objects", objects), objects);
+    }
+    return text;
 }
 
 // The Pinned page repeats the pinned rows of the other pages, like the Frequent page of the object tabs.

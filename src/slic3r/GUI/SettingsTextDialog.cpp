@@ -114,8 +114,9 @@ SettingsTextDialog::SettingsTextDialog(wxWindow* parent, Mode mode)
         auto* btns = new DialogButtons(this, {"Copy", "Cancel"});
         btns->GetButtonFromID(wxID_COPY)->Bind(wxEVT_BUTTON, [this](wxCommandEvent&) {
             wxClipboardLocker lock;
-            if (lock)
-                wxTheClipboard->SetData(new wxTextDataObject(m_text->GetValue()));
+            if (!lock)
+                return;
+            wxTheClipboard->SetData(new wxTextDataObject(m_text->GetValue()));
             EndModal(wxID_OK);
         });
         btns->GetCANCEL()->Bind(wxEVT_BUTTON, [this](wxCommandEvent&) { EndModal(wxID_CANCEL); });

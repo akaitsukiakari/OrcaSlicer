@@ -547,6 +547,11 @@ private:
 std::vector<std::string> get_pinned_print_options();
 void                     toggle_pinned_print_option(const std::string& opt_key);
 
+// Tooltip lines saying where the value of a process, filament or printer setting shown in the settings tab with
+// this config comes from (an unsaved change, the user preset or the system preset), and, for process settings,
+// which plates and objects override it. Empty for other configs.
+wxString get_value_source_text(const DynamicPrintConfig* config, const std::string& opt_key);
+
 class TabPrintModel : public TabPrint
 {
 public:
