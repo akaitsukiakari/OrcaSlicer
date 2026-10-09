@@ -518,6 +518,8 @@ set(SLIC3R_GUI_SOURCES
     GUI/SendMultiMachinePage.hpp
     GUI/SendSystemInfoDialog.cpp
     GUI/SendSystemInfoDialog.hpp
+    GUI/SettingsTextDialog.cpp
+    GUI/SettingsTextDialog.hpp
     GUI/SendToPrinter.cpp
     GUI/SendToPrinter.hpp
     GUI/SingleChoiceDialog.cpp

@@ -4,6 +4,10 @@
 #include "Plater.hpp"
 #include "GUI_App.hpp"
 #include "MsgDialog.hpp"
+#include "Tab.hpp"
+#include "libslic3r/Preset.hpp"
+#include <wx/menu.h>
+#include <string>
 
 #include <wx/gdicmn.h>
 #include <wx/panel.h>
@@ -83,6 +87,7 @@ OG_CustomCtrl::OG_CustomCtrl(   wxWindow*            parent,
     this->Bind(wxEVT_PAINT,     &OG_CustomCtrl::OnPaint, this);
     this->Bind(wxEVT_MOTION,    &OG_CustomCtrl::OnMotion, this);
     this->Bind(wxEVT_LEFT_DOWN, &OG_CustomCtrl::OnLeftDown, this);
+    this->Bind(wxEVT_RIGHT_DOWN, &OG_CustomCtrl::OnRightDown, this);
     this->Bind(wxEVT_LEAVE_WINDOW, &OG_CustomCtrl::OnLeaveWin, this);
 }
 
@@ -487,6 +492,40 @@ void OG_CustomCtrl::OnLeftDown(wxMouseEvent& event)
     }
 
     SetFocusIgnoringChildren();
+}
+
+// Right-clicking the name of a process setting offers to pin it to the Pinned page of the process tab.
+// The object and plate tabs reuse the process pages with their own config, so they are left out.
+void OG_CustomCtrl::OnRightDown(wxMouseEvent& event)
+{
+    Tab*  print_tab = wxGetApp().get_tab(Preset::TYPE_PRINT);
+    auto* conf_OG   = dynamic_cast<ConfigOptionsGroup*>(opt_group);
+    if (print_tab == nullptr || conf_OG == nullptr || conf_OG->config() == nullptr || conf_OG->config() != print_tab->get_config()) {
+        event.Skip();
+        return;
+    }
+
+    const wxPoint pos = event.GetLogicalPosition(wxClientDC(this));
+    for (const CtrlLine& line : ctrl_lines) {
+        if (!line.is_visible || !is_point_in_rect(pos, line.rect_label))
+            continue;
+        const std::vector<Option>& options = line.og_line.get_options();
+        if (options.size() != 1 || line.og_line.widget != nullptr)
+            break;
+        const std::string key = options.front().opt_id.substr(0, options.front().opt_id.find('#'));
+        const std::vector<std::string> pinned    = get_pinned_print_options();
+        const bool                     is_pinned = std::find(pinned.begin(), pinned.end(), key) != pinned.end();
+
+        wxMenu      menu;
+        wxMenuItem* item = menu.Append(wxID_ANY, is_pinned ? _L("Unpin from the Pinned page") : _L("Pin to the Pinned page"));
+        menu.Bind(wxEVT_MENU, [key](wxCommandEvent&) {
+            // Rebuilding the pages destroys this control, so it happens after the menu and this handler return.
+            wxGetApp().CallAfter([key] { toggle_pinned_print_option(key); });
+        }, item->GetId());
+        PopupMenu(&menu);
+        return;
+    }
+    event.Skip();
 }
 
 void OG_CustomCtrl::OnLeaveWin(wxMouseEvent& event)

@@ -393,6 +393,8 @@ set(lisbslic3r_sources
     MaterialType.hpp
     PrintConfig.cpp
     PrintConfig.hpp
+    SettingsText.cpp
+    SettingsText.hpp
     Print.cpp
     Print.hpp
     PrintObject.cpp

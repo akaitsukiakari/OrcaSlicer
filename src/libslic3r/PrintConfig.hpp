@@ -927,6 +927,15 @@ extern std::set<std::string> printer_options_with_variant_1;
 extern std::set<std::string> printer_options_with_variant_2;
 extern std::set<std::string> empty_options;
 
+// Process settings a plate can override (Plate Settings > First layer). The plate config is applied over
+// the full config when that plate is sliced, and these keys are saved per plate in the 3MF.
+inline const std::vector<std::string>& plate_override_options()
+{
+    static const std::vector<std::string> keys{"initial_layer_speed", "initial_layer_infill_speed", "initial_layer_travel_speed",
+                                               "slow_down_layers"};
+    return keys;
+}
+
 void set_variant_override(ConfigOptionVectorBase &target, const ConfigOptionVectorBase &source,
                           const std::vector<int> &variant_index, int stride = 1);
 

@@ -4722,6 +4722,13 @@ void PlateData::parse_filament_info(GCodeProcessorResult *result)
                 if (m_curr_plater)
                     m_curr_plater->nozzle_diameters = value;
             }
+            else if (std::find(plate_override_options().begin(), plate_override_options().end(), key) != plate_override_options().end())
+            {
+                if (m_curr_plater) {
+                    ConfigSubstitutionContext substitutions(ForwardCompatibilitySubstitutionRule::Enable);
+                    m_curr_plater->config.set_deserialize_nothrow(key, xml_unescape(value), substitutions);
+                }
+            }
         }
 
         return true;
@@ -8241,6 +8248,10 @@ void PlateData::parse_filament_info(GCodeProcessorResult *result)
                 ConfigOption* spiral_mode_opt = plate_data->config.option("spiral_mode");
                 if (spiral_mode_opt)
                     stream << "    <" << METADATA_TAG << " " << KEY_ATTR << "=\"" << SPIRAL_VASE_MODE << "\" " << VALUE_ATTR << "=\"" << spiral_mode_opt->getBool() << "\"/>\n";
+
+                for (const std::string& key : plate_override_options())
+                    if (plate_data->config.has(key))
+                        stream << "    <" << METADATA_TAG << " " << KEY_ATTR << "=\"" << key << "\" " << VALUE_ATTR << "=\"" << xml_escape(plate_data->config.opt_serialize(key)) << "\"/>\n";
 
                 //filament map related
                 ConfigOption* filament_map_mode_opt = plate_data->config.option("filament_map_mode");
