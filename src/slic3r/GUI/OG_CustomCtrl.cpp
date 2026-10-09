@@ -406,21 +406,22 @@ void OG_CustomCtrl::OnMotion(wxMouseEvent& event)
         for (size_t opt_idx = 0; opt_idx < undo_icons_cnt; opt_idx++) {
             const std::string& opt_key = option_set[opt_idx].opt_id;
             if (is_point_in_rect(pos, line.rects_undo_icon[opt_idx])) {
-                if (line.og_line.has_undo_ui())
-                    tooltip = *line.og_line.undo_tooltip();
-                else if (Field* field = opt_group->get_field(opt_key))
-                    tooltip = *field->undo_tooltip();
+                // The tooltip pointers stay null until the tab first sets the field's undo state.
+                const wxString* tip = line.og_line.has_undo_ui() ? line.og_line.undo_tooltip() :
+                                      opt_group->get_field(opt_key) ? opt_group->get_field(opt_key)->undo_tooltip() : nullptr;
+                if (tip != nullptr)
+                    tooltip = *tip;
                 break;
             }
             if (is_point_in_rect(pos, line.rects_undo_to_sys_icon[opt_idx])) {
-                if (line.og_line.has_undo_ui())
-                    tooltip = *line.og_line.undo_to_sys_tooltip();
-                else if (Field* field = opt_group->get_field(opt_key))
-                    tooltip = *field->undo_to_sys_tooltip();
+                const wxString* tip = line.og_line.has_undo_ui() ? line.og_line.undo_to_sys_tooltip() :
+                                      opt_group->get_field(opt_key) ? opt_group->get_field(opt_key)->undo_to_sys_tooltip() : nullptr;
+                if (tip != nullptr)
+                    tooltip = *tip;
                 break;
             }
             if (opt_idx < line.rects_edit_icon.size() && is_point_in_rect(pos, line.rects_edit_icon[opt_idx])) {
-                if (Field* field = opt_group->get_field(opt_key); field && field->has_edit_ui())
+                if (Field* field = opt_group->get_field(opt_key); field && field->has_edit_ui() && field->edit_tooltip() != nullptr)
                     tooltip = *field->edit_tooltip();
                 break;
             }

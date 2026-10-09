@@ -3345,6 +3345,22 @@ wxString get_value_source_text(const DynamicPrintConfig* config, const std::stri
     for (Preset::Type type : {Preset::TYPE_PRINT, Preset::TYPE_FILAMENT, Preset::TYPE_PRINTER})
         if (Tab* t = wxGetApp().get_tab(type); t != nullptr && t->get_presets() != nullptr && t->get_config() == config)
             tab = t;
+    auto* plate_tab = dynamic_cast<TabPrintPlate*>(wxGetApp().get_plate_tab());
+    if (plate_tab != nullptr && config != nullptr && config == plate_tab->get_config()) {
+        const DynamicPrintConfig* plate_config = plate_tab->selected_plate_config();
+        const DynamicPrintConfig* print_config = wxGetApp().get_tab(Preset::TYPE_PRINT)->get_config();
+        if (plate_config == nullptr || !config->has(key))
+            return {};
+        if (!plate_config->has(key))
+            return _L("Value from: process settings");
+        wxString text = _L("Value from: this plate");
+        if (print_config->has(key)) {
+            const std::string value = print_config->opt_serialize(key);
+            if (!value.empty() && value.size() <= 40 && value.find('\n') == std::string::npos)
+                text += " (" + _L("process value") + ": " + from_u8(value) + ")";
+        }
+        return text;
+    }
     if (tab == nullptr || config == nullptr || !config->has(key))
         return {};
 
@@ -4106,7 +4122,8 @@ void TabPrintPlate::on_value_change(const std::string& opt_key, const boost::any
             if (is_override_key)
                 plate->config()->apply_only(*m_config, {k});
         }
-        m_all_keys = concat(m_all_keys, { k });
+        // The field id ("key#0" for per-variant settings) is what lights up the field's undo arrow.
+        m_all_keys = concat(m_all_keys, { opt_key });
     }
     if (m_back_to_sys || set) update_changed_ui();
     m_back_to_sys = false;

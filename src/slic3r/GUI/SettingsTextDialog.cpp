@@ -267,14 +267,16 @@ void SettingsTextDialog::import_text(bool apply)
                 continue;
             routed.push_back(key);
             ConfigOption* opt = parsed.config.option(key)->clone();
-            // A single pasted value fills every extruder / variant slot of a vector setting.
+            // Keep the length of a vector setting (one value per extruder / variant): a single pasted value fills
+            // every slot, extra pasted values are dropped and missing ones keep the current value.
             auto* vec     = dynamic_cast<ConfigOptionVectorBase*>(opt);
             auto* cur_vec = dynamic_cast<const ConfigOptionVectorBase*>(current.option(key));
-            if (vec != nullptr && cur_vec != nullptr && vec->size() == 1 && cur_vec->size() > 1) {
+            if (vec != nullptr && cur_vec != nullptr && vec->size() != cur_vec->size() && vec->size() > 0) {
                 ConfigOption* filled     = current.option(key)->clone();
                 auto*         filled_vec = dynamic_cast<ConfigOptionVectorBase*>(filled);
                 for (size_t i = 0; i < filled_vec->size(); ++i)
-                    filled_vec->set_at(opt, i, 0);
+                    if (vec->size() == 1 || i < vec->size())
+                        filled_vec->set_at(opt, i, vec->size() == 1 ? 0 : i);
                 delete opt;
                 opt = filled;
             }
