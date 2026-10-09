@@ -3987,6 +3987,10 @@ void TabPrintPlate::build()
     m_config->option("first_layer_print_sequence", true);
     m_config->option("other_layers_print_sequence", true);
     m_config->option("other_layers_sequence_choice", true);
+    // The first layer overrides are G-code settings, which the region config this tab starts from does not have.
+    // Create them before the options list is built, or their fields never show the changed-value arrow.
+    for (const std::string& key : plate_override_options())
+        m_config->option(key, true);
 
     auto page = add_options_page(L("Plate Settings"), "empty");
     auto optgroup = page->new_optgroup("");
@@ -4007,6 +4011,7 @@ void TabPrintPlate::build()
         }
         group->have_sys_config = [this] { m_back_to_sys = true; return true; };
     }
+    init_options_list();
 }
 
 void TabPrintPlate::reset_model_config()
