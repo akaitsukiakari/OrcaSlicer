@@ -655,7 +655,10 @@ void PlateSettingsDialog::sync_plate_overrides(const DynamicPrintConfig& plate_c
         if (!plate_config.has(key))
             continue;
         const ConfigOptionDef* def = print_config_def.get(key);
-        lines += "\n" + _(def->label) + ": " + from_u8(plate_config.opt_serialize(key)) + (def->sidetext.empty() ? "" : " " + _(def->sidetext));
+        wxString line = "\n" + _(def->label) + ": " + wxString::FromUTF8(plate_config.opt_serialize(key));
+        if (!def->sidetext.empty())
+            line += " " + _(def->sidetext);
+        lines += line;
     }
     if (lines.empty())
         return;
