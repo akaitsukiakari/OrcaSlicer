@@ -144,6 +144,7 @@
 #include "slic3r/GUI/Jobs/Worker.hpp"
 #include "slic3r/GUI/KeyChord.hpp"
 #include "slic3r/GUI/ParamsPanel.hpp"
+#include "slic3r/GUI/SettingsTextDialog.hpp"
 #include "slic3r/GUI/Tabbook.hpp"
 #include "slic3r/GUI/Widgets/SideButton.hpp"
 #include "slic3r/plugin/host/PluginPages.hpp"
@@ -3041,6 +3042,9 @@ void MainFrame::init_menubar_as_editor()
         append_menu_item(import_menu, wxID_ANY, _L("Import Configs") + dots /*+ "\t" + ctrl + "I"*/, _L("Load configs"),
             [this](wxCommandEvent&) { load_config_file(); }, "menu_import", nullptr,
             [](){return true; }, this);
+        append_menu_item(import_menu, wxID_ANY, _L("Paste Settings as Text") + dots, _L("Apply settings pasted as text to the current presets"),
+            [this](wxCommandEvent&) { SettingsTextDialog dlg(this, SettingsTextDialog::Mode::Import); dlg.ShowModal(); }, "menu_import", nullptr,
+            []() { return true; }, this);
 
         append_submenu(fileMenu, import_menu, wxID_ANY, _L("Import"), "");
 
@@ -3083,6 +3087,9 @@ void MainFrame::init_menubar_as_editor()
             export_menu, wxID_ANY, _L("Export Preset Bundle") + dots /* + "\t" + ctrl + "E"*/, _L("Export current configuration to files"),
             [this](wxCommandEvent &) { export_config(); },
             "menu_export_config", nullptr,
+            []() { return true; }, this);
+        append_menu_item(export_menu, wxID_ANY, _L("Copy Settings as Text") + dots, _L("Copy the current preset settings as text"),
+            [this](wxCommandEvent&) { SettingsTextDialog dlg(this, SettingsTextDialog::Mode::Export); dlg.ShowModal(); }, "menu_export_config", nullptr,
             []() { return true; }, this);
 
         append_submenu(fileMenu, export_menu, wxID_ANY, _L("Export"), "");

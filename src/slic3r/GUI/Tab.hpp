@@ -533,11 +533,19 @@ public:
 	void		update() override;
 	void		clear_pages() override;
 	bool 		supports_printer_technology(const PrinterTechnology tech) const override { return tech == ptFFF; }
+	// Rebuilds the Pinned page after the list of pinned settings changed.
+	void		update_pinned_page();
 
 private:
+	void		add_pinned_page();
+
 	ogStaticText*	m_recommended_thin_wall_thickness_description_line = nullptr;
 	ogStaticText*	m_top_bottom_shell_thickness_explanation = nullptr;
 };
+
+// Process settings the user pinned to the Pinned page at the top of the process tab, stored in the app config.
+std::vector<std::string> get_pinned_print_options();
+void                     toggle_pinned_print_option(const std::string& opt_key);
 
 class TabPrintModel : public TabPrint
 {

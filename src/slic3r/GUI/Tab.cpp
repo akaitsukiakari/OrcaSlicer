@@ -73,6 +73,9 @@
 
 #include <boost/algorithm/string/predicate.hpp>
 #include <boost/algorithm/string/replace.hpp>
+#include <boost/algorithm/string/classification.hpp>
+#include <boost/algorithm/string/join.hpp>
+#include <boost/algorithm/string/split.hpp>
 #include "libslic3r/libslic3r.h"
 #include "slic3r/GUI/OptionsGroup.hpp"
 #include "wxExtensions.hpp"
@@ -136,7 +139,11 @@ int mode_to_selection(ConfigOptionMode mode)
 // Forward declaration for early use; definitions live later in this translation unit.
 static void validate_custom_gcode_cb(Tab* tab, const wxString& title, const t_config_option_key& opt_key, const boost::any& value);
 
-static const std::vector<std::string> plate_keys = { "curr_bed_type", "skirt_start_angle", "first_layer_print_sequence", "first_layer_sequence_choice", "other_layers_print_sequence", "other_layers_sequence_choice", "print_sequence", "spiral_mode"};
+static const std::vector<std::string> plate_keys = [] {
+    std::vector<std::string> keys = { "curr_bed_type", "skirt_start_angle", "first_layer_print_sequence", "first_layer_sequence_choice", "other_layers_print_sequence", "other_layers_sequence_choice", "print_sequence", "spiral_mode"};
+    keys.insert(keys.end(), plate_override_options().begin(), plate_override_options().end());
+    return keys;
+}();
 
 static std::pair<std::string, std::string> extruder_variant_keys[]{
     {},                                                  // invalid
@@ -3302,6 +3309,64 @@ void TabPrint::build()
     //     optgroup->append_single_option_line(option);
 
     //     build_preset_description_line(optgroup.get());
+
+    add_pinned_page();
+}
+
+static const char* PINNED_PRINT_OPTIONS_KEY = "pinned_print_options";
+
+std::vector<std::string> get_pinned_print_options()
+{
+    std::vector<std::string> keys;
+    const std::string        value = wxGetApp().app_config->get(PINNED_PRINT_OPTIONS_KEY);
+    boost::split(keys, value, boost::is_any_of(";"), boost::token_compress_on);
+    keys.erase(std::remove(keys.begin(), keys.end(), std::string()), keys.end());
+    return keys;
+}
+
+void toggle_pinned_print_option(const std::string& opt_key)
+{
+    std::vector<std::string> keys = get_pinned_print_options();
+    auto                     it   = std::find(keys.begin(), keys.end(), opt_key);
+    if (it != keys.end())
+        keys.erase(it);
+    else
+        keys.push_back(opt_key);
+    wxGetApp().app_config->set(PINNED_PRINT_OPTIONS_KEY, boost::algorithm::join(keys, ";"));
+    if (auto* tab = dynamic_cast<TabPrint*>(wxGetApp().get_tab(Preset::TYPE_PRINT)))
+        tab->update_pinned_page();
+}
+
+// The Pinned page repeats the pinned rows of the other pages, like the Frequent page of the object tabs.
+void TabPrint::add_pinned_page()
+{
+    if (m_type != Preset::TYPE_PRINT)
+        return;
+    std::vector<std::string> keys = get_pinned_print_options();
+    keys.erase(std::remove_if(keys.begin(), keys.end(), [this](const std::string& key) { return !m_config->has(key); }), keys.end());
+    if (keys.empty())
+        return;
+    auto page     = add_options_page(L("Pinned"), "empty");
+    auto optgroup = page->new_optgroup(L("Pinned settings"));
+    for (const std::string& key : keys)
+        optgroup->append_single_option_line(key, "", print_options_with_variant.count(key) ? 0 : -1);
+    m_pages.pop_back();
+    m_pages.insert(m_pages.begin(), page);
+}
+
+void TabPrint::update_pinned_page()
+{
+    // Swaps the page and rebuilds the page tree, as TabPrinter::build_unregular_pages() does. The selected
+    // page is unselected first, so that rebuild_page_tree() activates it again with fresh controls.
+    Freeze();
+    unselect_tree_item();
+    clear_pages();
+    m_pages.erase(std::remove_if(m_pages.begin(), m_pages.end(), [](const PageShp& page) { return page->title() == L("Pinned"); }),
+                  m_pages.end());
+    add_pinned_page();
+    Thaw();
+    rebuild_page_tree();
+    reload_config();
 }
 
 // Reload current config (aka presets->edited_preset->config) into the UI fields.
@@ -3843,10 +3908,16 @@ void TabPrintPlate::build()
     optgroup->append_single_option_line("first_layer_sequence_choice");
     optgroup->append_single_option_line("other_layers_sequence_choice");
 
-    for (auto& line : const_cast<std::vector<Line>&>(optgroup->get_lines())) {
-        line.undo_to_sys = true;
+    auto optgroup_first_layer = page->new_optgroup(L("First layer"));
+    for (const std::string& key : plate_override_options())
+        optgroup_first_layer->append_single_option_line(key, "", print_options_with_variant.count(key) ? 0 : -1);
+
+    for (auto group : {optgroup, optgroup_first_layer}) {
+        for (auto& line : const_cast<std::vector<Line>&>(group->get_lines())) {
+            line.undo_to_sys = true;
+        }
+        group->have_sys_config = [this] { m_back_to_sys = true; return true; };
     }
-    optgroup->have_sys_config = [this] { m_back_to_sys = true; return true; };
 }
 
 void TabPrintPlate::reset_model_config()
@@ -3865,6 +3936,8 @@ void TabPrintPlate::reset_model_config()
         plate->set_first_layer_print_sequence({});
         plate->set_other_layers_print_sequence({});
         plate->set_spiral_vase_mode(false, true);
+        for (const std::string& key : plate_override_options())
+            plate->config()->erase(key);
         notify_changed(plate_item.first);
     }
     update_model_config();
@@ -3874,6 +3947,10 @@ void TabPrintPlate::reset_model_config()
 void TabPrintPlate::on_value_change(const std::string& opt_key, const boost::any& value)
 {
     auto k = opt_key;
+    // Per-variant override keys arrive as "key#idx"; the plate stores the whole vector under "key".
+    if (auto n = k.find('#'); n != std::string::npos)
+        k = k.substr(0, n);
+    const bool is_override_key = std::find(plate_override_options().begin(), plate_override_options().end(), k) != plate_override_options().end();
     if (m_config_manipulation.is_applying()) {
         return;
     }
@@ -3898,8 +3975,12 @@ void TabPrintPlate::on_value_change(const std::string& opt_key, const boost::any
                 plate->set_other_layers_print_sequence({});
             if (k == "spiral_mode")
                 plate->set_spiral_vase_mode(false, true);
+            if (is_override_key)
+                plate->config()->erase(k);
         }
-        m_all_keys.erase(std::remove(m_all_keys.begin(), m_all_keys.end(), k), m_all_keys.end());
+        m_all_keys.erase(std::remove_if(m_all_keys.begin(), m_all_keys.end(),
+                                        [&k](const std::string& e) { return e == k || e.rfind(k + "#", 0) == 0; }),
+                         m_all_keys.end());
     }
     else if (set) {
         for (auto plate_item : m_object_configs) {
@@ -3967,6 +4048,8 @@ void TabPrintPlate::on_value_change(const std::string& opt_key, const boost::any
             if (k == "spiral_mode") {
                 plate->set_spiral_vase_mode(m_config->opt_bool("spiral_mode"), false);
             }
+            if (is_override_key)
+                plate->config()->apply_only(*m_config, {k});
         }
         m_all_keys = concat(m_all_keys, { k });
     }
