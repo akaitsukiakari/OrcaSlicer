@@ -50,6 +50,7 @@ public:
     void OnFileToolItem(wxAuiToolBarEvent& evt);
     void OnDropdownToolItem(wxAuiToolBarEvent& evt);
     void OnCalibToolItem(wxAuiToolBarEvent &evt);
+    void OnSettingsTextToolItem(wxAuiToolBarEvent &evt);
     void OnMouseLeftDClock(wxMouseEvent& mouse);
     void OnMouseLeftDown(wxMouseEvent& event);
     void OnMouseLeftUp(wxMouseEvent& event);

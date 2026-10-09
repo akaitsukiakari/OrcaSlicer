@@ -29,6 +29,7 @@
 #endif
 #include "WebViewDialog.hpp"
 #include "PartPlate.hpp"
+#include "SettingsTextDialog.hpp"
 
 #include <boost/log/trivial.hpp>
 #include "libslic3r/AppConfig.hpp"
@@ -52,6 +53,7 @@ enum CUSTOM_ID
     ID_TITLE,
     ID_MODEL_STORE,
     ID_CALIB,
+    ID_SETTINGS_TEXT,
     ID_TOOL_BAR = 3200,
     ID_AMS_NOTEBOOK,
 };
@@ -300,6 +302,11 @@ void BBLTopbar::Init(wxFrame* parent)
         dropdown_bitmap, wxEmptyString);
 
     this->AddSpacer(FromDIP(5));
+
+    wxBitmap settings_text_bitmap = create_scaled_bitmap("topbar_settings_text", nullptr, TOPBAR_ICON_SIZE);
+    this->AddTool(ID_SETTINGS_TEXT, "", settings_text_bitmap, _L("Copy or paste settings as text"));
+
+    this->AddSpacer(FromDIP(5));
     this->AddSeparator();
     this->AddSpacer(FromDIP(5));
 
@@ -388,6 +395,7 @@ void BBLTopbar::Init(wxFrame* parent)
     this->Bind(wxEVT_AUITOOLBAR_TOOL_DROPDOWN, &BBLTopbar::OnFileToolItem, this, ID_TOP_FILE_MENU);
     this->Bind(wxEVT_AUITOOLBAR_TOOL_DROPDOWN, &BBLTopbar::OnDropdownToolItem, this, ID_TOP_DROPDOWN_MENU);
     this->Bind(wxEVT_AUITOOLBAR_TOOL_DROPDOWN, &BBLTopbar::OnCalibToolItem, this, ID_CALIB);
+    this->Bind(wxEVT_AUITOOLBAR_TOOL_DROPDOWN, &BBLTopbar::OnSettingsTextToolItem, this, ID_SETTINGS_TEXT);
     this->Bind(wxEVT_AUITOOLBAR_TOOL_DROPDOWN, &BBLTopbar::OnIconize, this, wxID_ICONIZE_FRAME);
     this->Bind(wxEVT_AUITOOLBAR_TOOL_DROPDOWN, &BBLTopbar::OnFullScreen, this, wxID_MAXIMIZE_FRAME);
     this->Bind(wxEVT_AUITOOLBAR_TOOL_DROPDOWN, &BBLTopbar::OnCloseFrame, this, wxID_CLOSE_FRAME);
@@ -551,6 +559,9 @@ void BBLTopbar::Rescale() {
     //item = this->FindTool(wxID_OPEN);
     //item->SetBitmap(create_scaled_bitmap("topbar_open", nullptr, TOPBAR_ICON_SIZE));
 
+    item = this->FindTool(ID_SETTINGS_TEXT);
+    item->SetBitmap(create_scaled_bitmap("topbar_settings_text", this, TOPBAR_ICON_SIZE));
+
     item = this->FindTool(wxID_SAVE);
     item->SetBitmap(create_scaled_bitmap("topbar_save", this, TOPBAR_ICON_SIZE));
 
@@ -695,6 +706,33 @@ void BBLTopbar::OnCalibToolItem(wxAuiToolBarEvent &evt)
 
     // make sure the button is "un-stuck"
     tb->SetToolSticky(evt.GetId(), false);
+}
+
+void BBLTopbar::OnSettingsTextToolItem(wxAuiToolBarEvent& evt)
+{
+    wxAuiToolBar* tb = static_cast<wxAuiToolBar*>(evt.GetEventObject());
+    tb->SetToolSticky(evt.GetId(), true);
+
+    wxMenu menu;
+    SettingsTextDialog::Mode mode = SettingsTextDialog::Mode::Export;
+    bool                     chosen = false;
+    menu.Append(wxID_COPY, _L("Copy Settings as Text") + dots);
+    menu.Append(wxID_PASTE, _L("Paste Settings as Text") + dots);
+    menu.Bind(wxEVT_MENU, [&](wxCommandEvent& e) {
+        mode   = e.GetId() == wxID_PASTE ? SettingsTextDialog::Mode::Import : SettingsTextDialog::Mode::Export;
+        chosen = true;
+    });
+    auto rec = this->GetToolRect(ID_SETTINGS_TEXT);
+    GetParent()->PopupMenu(&menu, wxPoint(rec.GetLeft(), this->GetSize().GetHeight() - 2));
+
+    tb->SetToolSticky(evt.GetId(), false);
+
+    // Open the dialog after the menu is gone, not from inside its event handler.
+    if (chosen)
+        wxGetApp().CallAfter([mode]() {
+            SettingsTextDialog dlg(wxGetApp().mainframe, mode);
+            dlg.ShowModal();
+        });
 }
 
 void BBLTopbar::OnMouseLeftDown(wxMouseEvent& event)

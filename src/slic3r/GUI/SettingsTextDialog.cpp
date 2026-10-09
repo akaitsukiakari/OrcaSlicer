@@ -2,15 +2,18 @@
 
 #include <algorithm>
 #include <array>
+#include <utility>
 #include <string>
 #include <vector>
 
 #include <wx/clipbrd.h>
 #include <wx/dataobj.h>
 #include <wx/font.h>
+#include <wx/grid.h>
 #include <wx/sizer.h>
 #include <wx/stattext.h>
 #include <wx/textctrl.h>
+#include <wx/tokenzr.h>
 
 #include "libslic3r/Preset.hpp"
 #include "libslic3r/PresetBundle.hpp"
@@ -71,6 +74,22 @@ wxString key_list(const std::vector<std::string>& keys)
     return out;
 }
 
+// Splits settings text into its comment lines and its "key = value" rows, for the table view.
+void split_settings_text(const wxString& text, std::vector<wxString>& comments, std::vector<std::pair<wxString, wxString>>& rows)
+{
+    wxStringTokenizer lines(text, "\r\n", wxTOKEN_STRTOK);
+    while (lines.HasMoreTokens()) {
+        const wxString line = lines.GetNextToken().Strip(wxString::both);
+        const int      eq   = line.Find('=');
+        if (line.empty())
+            continue;
+        if (line.StartsWith("#") || eq == wxNOT_FOUND)
+            comments.push_back(line);
+        else
+            rows.emplace_back(line.Left(eq).Strip(wxString::both), line.Mid(eq + 1).Strip(wxString::both));
+    }
+}
+
 } // namespace
 
 SettingsTextDialog::SettingsTextDialog(wxWindow* parent, Mode mode)
@@ -92,10 +111,14 @@ SettingsTextDialog::SettingsTextDialog(wxWindow* parent, Mode mode)
         choices->Add(new wxStaticText(this, wxID_ANY, _L("Include") + ":"), 0, wxALIGN_CENTER_VERTICAL);
         m_scope_choice = new RadioGroup(this, {_L("Changes from the system preset"), _L("All settings")}, wxHORIZONTAL);
         choices->Add(m_scope_choice, 0, wxALIGN_CENTER_VERTICAL);
+        choices->Add(new wxStaticText(this, wxID_ANY, _L("Show as") + ":"), 0, wxALIGN_CENTER_VERTICAL);
+        m_view_choice = new RadioGroup(this, {_L("Text"), _L("Table")}, wxHORIZONTAL);
+        choices->Add(m_view_choice, 0, wxALIGN_CENTER_VERTICAL);
         sizer->Add(choices, 0, wxEXPAND | wxLEFT | wxRIGHT | wxTOP, FromDIP(10));
 
         m_type_choice->Bind(wxEVT_RADIOBOX, [this](wxCommandEvent& e) { update_export_text(); e.Skip(); });
         m_scope_choice->Bind(wxEVT_RADIOBOX, [this](wxCommandEvent& e) { update_export_text(); e.Skip(); });
+        m_view_choice->Bind(wxEVT_RADIOBOX, [this](wxCommandEvent& e) { show_table(m_view_choice->GetSelection() == 1); e.Skip(); });
     } else {
         auto* hint = new wxStaticText(this, wxID_ANY,
                                       _L("Paste \"key = value\" lines, such as text copied from this dialog or the settings block at "
@@ -106,9 +129,19 @@ SettingsTextDialog::SettingsTextDialog(wxWindow* parent, Mode mode)
     }
 
     m_text = new wxTextCtrl(this, wxID_ANY, wxEmptyString, wxDefaultPosition, wxSize(FromDIP(600), FromDIP(360)),
-                            wxTE_MULTILINE | wxTE_DONTWRAP | (m_mode == Mode::Export ? wxTE_READONLY : 0));
+                            wxTE_MULTILINE | wxTE_DONTWRAP);
     m_text->SetFont(wxFont(wxFontInfo(10).Family(wxFONTFAMILY_TELETYPE)));
     sizer->Add(m_text, 1, wxEXPAND | wxALL, FromDIP(10));
+
+    if (m_mode == Mode::Export) {
+        m_grid = new wxGrid(this, wxID_ANY, wxDefaultPosition, wxSize(FromDIP(600), FromDIP(360)));
+        m_grid->CreateGrid(0, 2);
+        m_grid->SetColLabelValue(0, _L("Setting"));
+        m_grid->SetColLabelValue(1, _L("Value"));
+        m_grid->HideRowLabels();
+        m_grid->Hide();
+        sizer->Add(m_grid, 1, wxEXPAND | wxALL, FromDIP(10));
+    }
 
     if (m_mode == Mode::Export) {
         auto* btns = new DialogButtons(this, {"Copy", "Cancel"});
@@ -116,15 +149,16 @@ SettingsTextDialog::SettingsTextDialog(wxWindow* parent, Mode mode)
             wxClipboardLocker lock;
             if (!lock)
                 return;
-            wxTheClipboard->SetData(new wxTextDataObject(m_text->GetValue()));
+            wxTheClipboard->SetData(new wxTextDataObject(current_text()));
             EndModal(wxID_OK);
         });
         btns->GetCANCEL()->Bind(wxEVT_BUTTON, [this](wxCommandEvent&) { EndModal(wxID_CANCEL); });
         sizer->Add(btns, 0, wxEXPAND);
         update_export_text();
     } else {
-        auto* btns = new DialogButtons(this, {"Apply", "Cancel"});
-        btns->GetAPPLY()->Bind(wxEVT_BUTTON, [this](wxCommandEvent&) { apply_import_text(); });
+        auto* btns = new DialogButtons(this, {L("Validate"), "Apply", "Cancel"}, "", 1);
+        btns->GetFIRST()->Bind(wxEVT_BUTTON, [this](wxCommandEvent&) { import_text(false); });
+        btns->GetAPPLY()->Bind(wxEVT_BUTTON, [this](wxCommandEvent&) { import_text(true); });
         btns->GetCANCEL()->Bind(wxEVT_BUTTON, [this](wxCommandEvent&) { EndModal(wxID_CANCEL); });
         sizer->Add(btns, 0, wxEXPAND);
     }
@@ -137,6 +171,8 @@ SettingsTextDialog::SettingsTextDialog(wxWindow* parent, Mode mode)
 void SettingsTextDialog::on_dpi_changed(const wxRect& /*suggested_rect*/)
 {
     m_text->SetMinSize(wxSize(FromDIP(600), FromDIP(360)));
+    if (m_grid != nullptr)
+        m_grid->SetMinSize(wxSize(FromDIP(600), FromDIP(360)));
     GetSizer()->SetSizeHints(this);
     Refresh();
 }
@@ -163,9 +199,55 @@ void SettingsTextDialog::update_export_text()
         keys = edited.config.keys();
     }
     m_text->SetValue(from_u8(settings_to_text(edited.config, keys, header)));
+    if (m_grid != nullptr && m_grid->IsShown())
+        fill_table(m_text->GetValue());
 }
 
-void SettingsTextDialog::apply_import_text()
+wxString SettingsTextDialog::current_text() const
+{
+    if (m_grid == nullptr || !m_grid->IsShown())
+        return m_text->GetValue();
+    m_grid->SaveEditControlValue(); // a cell still being edited
+    wxString text;
+    for (const wxString& comment : m_table_comments)
+        text += comment + "\n";
+    for (int row = 0; row < m_grid->GetNumberRows(); ++row) {
+        const wxString key = m_grid->GetCellValue(row, 0).Strip(wxString::both);
+        if (!key.empty())
+            text += key + " = " + m_grid->GetCellValue(row, 1).Strip(wxString::both) + "\n";
+    }
+    return text;
+}
+
+void SettingsTextDialog::fill_table(const wxString& text)
+{
+    std::vector<std::pair<wxString, wxString>> rows;
+    m_table_comments.clear();
+    split_settings_text(text, m_table_comments, rows);
+    if (m_grid->GetNumberRows() > 0)
+        m_grid->DeleteRows(0, m_grid->GetNumberRows());
+    m_grid->AppendRows(int(rows.size()));
+    for (size_t i = 0; i < rows.size(); ++i) {
+        m_grid->SetCellValue(int(i), 0, rows[i].first);
+        m_grid->SetCellValue(int(i), 1, rows[i].second);
+    }
+    m_grid->AutoSizeColumns(false);
+}
+
+void SettingsTextDialog::show_table(bool table)
+{
+    if (m_grid == nullptr || table == m_grid->IsShown())
+        return;
+    if (table)
+        fill_table(m_text->GetValue());
+    else
+        m_text->SetValue(current_text());
+    m_grid->Show(table);
+    m_text->Show(!table);
+    Layout();
+}
+
+void SettingsTextDialog::import_text(bool apply)
 {
     SettingsTextParseResult  parsed  = settings_from_text(into_u8(m_text->GetValue()));
     std::vector<std::string> skipped = parsed.skipped_keys;
@@ -201,7 +283,8 @@ void SettingsTextDialog::apply_import_text()
         const size_t count = config.keys().size();
         if (count == 0)
             continue;
-        tab->load_config(config);
+        if (apply)
+            tab->load_config(config);
         applied_summary += format_wxstr(_L("%1%: %2% settings"), _L(info.name), count) + "\n";
     }
 
@@ -209,16 +292,17 @@ void SettingsTextDialog::apply_import_text()
         if (std::find(routed.begin(), routed.end(), key) == routed.end())
             skipped.push_back(key);
 
-    wxString msg = applied_summary.empty() ? _L("No settings were applied.") : _L("Applied") + ":\n" + applied_summary;
+    wxString msg = applied_summary.empty() ? (apply ? _L("No settings were applied.") : _L("No settings would be applied.")) :
+                                             (apply ? _L("Applied") : _L("Would apply")) + ":\n" + applied_summary;
     if (!skipped.empty())
         msg += "\n" + format_wxstr(_L("Skipped %1% settings that are unknown or not part of a preset: %2%"), skipped.size(), key_list(skipped));
     if (!parsed.invalid_keys.empty())
         msg += "\n" + format_wxstr(_L("Skipped %1% settings with values that could not be read: %2%"), parsed.invalid_keys.size(),
                                    key_list(parsed.invalid_keys));
 
-    MessageDialog dlg(this, msg, _L("Paste Settings as Text"), wxOK | wxICON_INFORMATION);
+    MessageDialog dlg(this, msg, apply ? _L("Paste Settings as Text") : _L("Validate"), wxOK | wxICON_INFORMATION);
     dlg.ShowModal();
-    if (!applied_summary.empty())
+    if (apply && !applied_summary.empty())
         EndModal(wxID_OK);
 }
 

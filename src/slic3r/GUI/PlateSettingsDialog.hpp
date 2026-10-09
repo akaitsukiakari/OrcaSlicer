@@ -15,6 +15,7 @@
 #include "slic3r/GUI/wxExtensions.hpp"
 #include <wx/sizer.h>
 #include "slic3r/GUI/GUI_Utils.hpp"
+#include <wx/stattext.h>
 #include <wx/string.h>
 #include <wx/toplevel.h>
 #include "libslic3r/PrintConfig.hpp"
@@ -119,6 +120,8 @@ public:
     void sync_first_layer_print_seq(int selection, const std::vector<int>& seq = std::vector<int>());
     void sync_other_layers_print_seq(int selection, const std::vector<LayerPrintSequence>& seq);
     void sync_spiral_mode(bool spiral_mode, bool as_global);
+    // Lists the process settings this plate overrides (see plate_override_options()), which the dialog cannot edit.
+    void sync_plate_overrides(const DynamicPrintConfig& plate_config);
     wxString to_bed_type_name(BedType bed_type);
     wxString to_print_sequence_name(PrintSequence print_seq);
     void on_dpi_changed(const wxRect& suggested_rect) override;
@@ -185,6 +188,7 @@ protected:
     DragCanvas* m_drag_canvas;
     OtherLayersSeqPanel* m_other_layers_seq_panel;
     TextInput *m_ti_plate_name;
+    wxStaticText* m_overrides_text { nullptr };
 };
 
 class PlateNameEditDialog : public DPIDialog
