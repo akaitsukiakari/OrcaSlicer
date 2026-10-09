@@ -22161,6 +22161,7 @@ void Plater::open_platesettings_dialog(wxCommandEvent& evt) {
     }
 
     dlg.sync_spiral_mode(curr_plate->get_spiral_vase_mode(), !curr_plate->has_spiral_mode_config());
+    dlg.sync_plate_overrides(*curr_plate->config());
 
     dlg.Bind(EVT_SET_BED_TYPE_CONFIRM, [this, plate_index, &dlg](wxCommandEvent& e) {
         PartPlate* curr_plate = p->partplate_list.get_curr_plate();

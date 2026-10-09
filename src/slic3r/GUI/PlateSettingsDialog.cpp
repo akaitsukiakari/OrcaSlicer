@@ -1,5 +1,6 @@
 #include "PlateSettingsDialog.hpp"
 #include "MsgDialog.hpp"
+#include "Tab.hpp"
 #include "Widgets/DialogButtons.hpp"
 #include <climits>
 #include <wx/event.h>
@@ -524,6 +525,13 @@ PlateSettingsDialog::PlateSettingsDialog(wxWindow* parent, const wxString& title
         }
     }
 
+    // Plate overrides of process settings, set from the plate row of the object list; filled by sync_plate_overrides().
+    m_overrides_text = new wxStaticText(this, wxID_ANY, wxEmptyString);
+    m_overrides_text->SetFont(Label::Body_12);
+    m_overrides_text->Hide();
+    m_sizer_main->AddSpacer(FromDIP(5));
+    m_sizer_main->Add(m_overrides_text, 0, wxEXPAND | wxLEFT | wxRIGHT, FromDIP(30));
+
     auto dlg_btns = new DialogButtons(this, {"OK", "Cancel"});
 
     dlg_btns->GetOK()->Bind(wxEVT_BUTTON, [this](auto& e) {
@@ -639,6 +647,28 @@ void PlateSettingsDialog::sync_spiral_mode(bool spiral_mode, bool as_global)
                 m_spiral_mode_choice->SetSelection(2);
         }
     }
+}
+
+void PlateSettingsDialog::sync_plate_overrides(const DynamicPrintConfig& plate_config)
+{
+    wxString lines;
+    for (const std::string& key : plate_override_options()) {
+        if (!plate_config.has(key))
+            continue;
+        const ConfigOptionDef* def = print_config_def.get(key);
+        wxString line = "\n" + _(def->label) + ": " + wxString::FromUTF8(single_value_text(plate_config, key));
+        if (!def->sidetext.empty())
+            line += " " + _(def->sidetext);
+        lines += line;
+    }
+    if (lines.empty())
+        return;
+    m_overrides_text->SetLabel(_L("This plate also overrides these process settings:") + lines + "\n" +
+                               _L("Change them in the object list: switch the process settings to Objects and select the plate."));
+    m_overrides_text->Wrap(FromDIP(590));
+    m_overrides_text->Show();
+    GetSizer()->SetSizeHints(this);
+    CenterOnParent();
 }
 
 wxString PlateSettingsDialog::to_bed_type_name(BedType bed_type) {

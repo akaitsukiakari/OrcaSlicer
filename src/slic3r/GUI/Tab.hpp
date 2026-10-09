@@ -551,6 +551,8 @@ void                     toggle_pinned_print_option(const std::string& opt_key);
 // this config comes from (an unsaved change, the user preset or the system preset), and, for process settings,
 // which plates and objects override it. Empty for other configs.
 wxString get_value_source_text(const DynamicPrintConfig* config, const std::string& opt_key);
+// The serialized value of a setting, shortened to one entry when all entries of its vector are the same.
+std::string single_value_text(const DynamicPrintConfig& config, const std::string& key);
 
 class TabPrintModel : public TabPrint
 {
@@ -604,6 +606,9 @@ public:
 	int show_spiral_mode_settings_dialog(bool is_object_config) { return m_config_manipulation.show_spiral_mode_settings_dialog(is_object_config); }
 	// Disables the user-defined filament print order while a mixed-color filament exists.
 	void update_mixed_filament_seq_state();
+	// Settings the selected plate stores itself, or nullptr when no plate is selected.
+	const DynamicPrintConfig* selected_plate_config() const
+	{ return m_object_configs.empty() ? nullptr : &m_object_configs.begin()->second->get(); }
 
 protected:
 	virtual void    on_value_change(const std::string& opt_key, const boost::any& value) override;
