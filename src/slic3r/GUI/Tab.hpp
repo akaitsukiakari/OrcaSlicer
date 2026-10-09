@@ -551,6 +551,8 @@ void                     toggle_pinned_print_option(const std::string& opt_key);
 // this config comes from (an unsaved change, the user preset or the system preset), and, for process settings,
 // which plates and objects override it. Empty for other configs.
 wxString get_value_source_text(const DynamicPrintConfig* config, const std::string& opt_key);
+// The serialized value of a setting, shortened to one entry when all entries of its vector are the same.
+std::string single_value_text(const DynamicPrintConfig& config, const std::string& key);
 
 class TabPrintModel : public TabPrint
 {

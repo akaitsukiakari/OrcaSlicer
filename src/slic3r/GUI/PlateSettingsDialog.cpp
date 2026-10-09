@@ -1,5 +1,6 @@
 #include "PlateSettingsDialog.hpp"
 #include "MsgDialog.hpp"
+#include "Tab.hpp"
 #include "Widgets/DialogButtons.hpp"
 #include <climits>
 #include <wx/event.h>
@@ -655,7 +656,7 @@ void PlateSettingsDialog::sync_plate_overrides(const DynamicPrintConfig& plate_c
         if (!plate_config.has(key))
             continue;
         const ConfigOptionDef* def = print_config_def.get(key);
-        wxString line = "\n" + _(def->label) + ": " + wxString::FromUTF8(plate_config.opt_serialize(key));
+        wxString line = "\n" + _(def->label) + ": " + wxString::FromUTF8(single_value_text(plate_config, key));
         if (!def->sidetext.empty())
             line += " " + _(def->sidetext);
         lines += line;

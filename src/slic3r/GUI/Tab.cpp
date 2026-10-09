@@ -3338,6 +3338,24 @@ void toggle_pinned_print_option(const std::string& opt_key)
         tab->update_pinned_page();
 }
 
+// The serialized value, or only its first entry when every entry of a vector (one per extruder / variant) is the same.
+std::string single_value_text(const DynamicPrintConfig& config, const std::string& key)
+{
+    const auto* vec = dynamic_cast<const ConfigOptionVectorBase*>(config.option(key));
+    if (vec != nullptr && vec->size() > 1) {
+        std::unique_ptr<ConfigOption> first(config.option(key)->clone());
+        auto*                         first_vec = dynamic_cast<ConfigOptionVectorBase*>(first.get());
+        first_vec->resize(1);
+        std::unique_ptr<ConfigOption> uniform(config.option(key)->clone());
+        auto*                         uniform_vec = dynamic_cast<ConfigOptionVectorBase*>(uniform.get());
+        for (size_t i = 0; i < uniform_vec->size(); ++i)
+            uniform_vec->set_at(first.get(), i, 0);
+        if (*uniform == *config.option(key))
+            return first->serialize();
+    }
+    return config.opt_serialize(key);
+}
+
 wxString get_value_source_text(const DynamicPrintConfig* config, const std::string& opt_key)
 {
     const std::string key = opt_key.substr(0, opt_key.find('#'));
@@ -3355,7 +3373,7 @@ wxString get_value_source_text(const DynamicPrintConfig* config, const std::stri
             return _L("Value from: process settings");
         wxString text = _L("Value from: this plate");
         if (print_config->has(key)) {
-            const std::string value = print_config->opt_serialize(key);
+            const std::string value = single_value_text(*print_config, key);
             if (!value.empty() && value.size() <= 40 && value.find('\n') == std::string::npos)
                 text += " (" + _L("process value") + ": " + from_u8(value) + ")";
         }
@@ -3372,7 +3390,7 @@ wxString get_value_source_text(const DynamicPrintConfig* config, const std::stri
     };
     // " (label: value)", left out for long values such as custom G-code.
     auto value_note = [&key](const wxString& label, const DynamicPrintConfig& cfg) -> wxString {
-        const std::string value = cfg.has(key) ? cfg.opt_serialize(key) : std::string();
+        const std::string value = cfg.has(key) ? single_value_text(cfg, key) : std::string();
         if (value.empty() || value.size() > 40 || value.find('\n') != std::string::npos)
             return {};
         return " (" + label + ": " + from_u8(value) + ")";
@@ -4029,6 +4047,23 @@ void TabPrintPlate::on_value_change(const std::string& opt_key, const boost::any
         return;
     if (!m_object_configs.empty())
         wxGetApp().plater()->take_snapshot((boost::format("Change Option %s") % k).str());
+    // A plate override is one value for the whole plate: the field edits the slot of the variant shown on the
+    // variant switch, so copy that slot to every extruder / nozzle variant before storing the vector.
+    std::vector<std::string> changed_ids{opt_key};
+    if (is_override_key && !m_back_to_sys && m_active_page != nullptr) {
+        if (auto* vec = dynamic_cast<ConfigOptionVectorBase*>(m_config->option(k)); vec != nullptr && vec->size() > 1) {
+            int edited = 0;
+            for (auto group : m_active_page->m_optgroups)
+                if (auto it = group->opt_map().find(opt_key); it != group->opt_map().end() && it->second.second >= 0)
+                    edited = it->second.second;
+            std::unique_ptr<ConfigOption> source(m_config->option(k)->clone());
+            changed_ids.clear();
+            for (size_t i = 0; i < vec->size(); ++i) {
+                vec->set_at(source.get(), i, size_t(edited));
+                changed_ids.push_back(k + "#" + std::to_string(i));
+            }
+        }
+    }
     bool set = true;
     if (m_back_to_sys) {
         for (auto plate_item : m_object_configs) {
@@ -4122,8 +4157,8 @@ void TabPrintPlate::on_value_change(const std::string& opt_key, const boost::any
             if (is_override_key)
                 plate->config()->apply_only(*m_config, {k});
         }
-        // The field id ("key#0" for per-variant settings) is what lights up the field's undo arrow.
-        m_all_keys = concat(m_all_keys, { opt_key });
+        // Per-variant settings are listed per slot ("key#i"), as update_model_config() lists them.
+        m_all_keys = concat(m_all_keys, changed_ids);
     }
     if (m_back_to_sys || set) update_changed_ui();
     m_back_to_sys = false;
