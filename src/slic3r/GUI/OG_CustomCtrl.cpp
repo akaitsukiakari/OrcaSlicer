@@ -386,6 +386,11 @@ void OG_CustomCtrl::OnMotion(wxMouseEvent& event)
             if (!suppress_hyperlinks && !line.og_line.label_path.empty())
                 tooltip = OptionsGroup::get_url(line.og_line.label_path) + "\n\n";
             tooltip += line.og_line.label_tooltip;
+            if (auto* conf_OG = dynamic_cast<ConfigOptionsGroup*>(opt_group); conf_OG != nullptr && line.og_line.get_options().size() == 1) {
+                const wxString source = get_value_source_text(conf_OG->config(), line.og_line.get_options().front().opt_id);
+                if (!source.empty())
+                    tooltip += (tooltip.empty() ? "" : "\n\n") + source;
+            }
             // BBS: markdown tip
             focusedLine = &line;
             markdowntip = line.og_line.label.empty()
