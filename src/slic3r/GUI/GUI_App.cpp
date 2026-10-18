@@ -505,8 +505,14 @@ public:
         rc.height = dc.GetTextExtent(m_text_version).GetHeight();
         dc.DrawLabel(m_text_version, rc, wxALIGN_CENTER);
 
+        // Orca fork: build commit and time under the version.
+        dc.SetFont(m_font_build);
+        rc.y += rc.height + FromDIP(2);
+        rc.height = dc.GetTextExtent(m_text_build).GetHeight();
+        dc.DrawLabel(m_text_build, rc, wxALIGN_CENTER);
+
         dc.SetFont(m_font_action);
-        rc.y      = c_sz.GetHeight() * 0.85;
+        rc.y      = c_sz.GetHeight() * 0.88; // Orca fork: was 0.85, moved down for the build line
         rc.height = dc.GetTextExtent(m_text_action).GetHeight();
         dc.DrawLabel(m_text_action, rc, wxALIGN_CENTER);
 
@@ -574,12 +580,14 @@ private:
     wxColour m_progress_fg_color;
 
     wxString m_text_version = GUI_App::format_display_version();
+    wxString m_text_build   = GUI_App::format_build_label();
     wxString m_text_action  = _L("Loading configuration") + dots;
     int      m_progress     = 0;
     int      m_progress_h   = 6;
 
     wxFont m_font_version = Label::Body_16;
     wxFont m_font_action  = Label::Body_16;
+    wxFont m_font_build   = Label::Body_12;
 };
 
 #ifdef __linux__
@@ -6862,8 +6870,15 @@ std::string GUI_App::format_display_version()
 {
     if (!version_display.empty()) return version_display;
 
-    version_display = SoftFever_VERSION;
+    // Orca fork: mark this as a forked build wherever the version is shown.
+    version_display = std::string(SoftFever_VERSION) + " (fork)";
     return version_display;
+}
+
+wxString GUI_App::format_build_label()
+{
+    // TRN %s is the commit the application was built from
+    return wxString::Format(_L("Build %s"), wxString::Format("%s (%s)", build_commit_label, build_time));
 }
 
 std::string GUI_App::format_IP(const std::string& ip)

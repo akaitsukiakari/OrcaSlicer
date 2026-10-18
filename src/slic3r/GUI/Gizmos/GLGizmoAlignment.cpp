@@ -507,6 +507,62 @@ bool GLGizmoAlignment::can_distribute(AlignType type) const
            get_items_count(type, false) >= 3;
 }
 
+bool GLGizmoAlignment::can_arrange_grid() const
+{
+    return !is_parts_selection(false) && get_items_count(AlignType::CENTER_X, false) >= 2;
+}
+
+bool GLGizmoAlignment::arrange_grid()
+{
+    if (!can_arrange_grid())
+        return false;
+
+    BoundingBoxf3 big_bb;
+    auto          objects = get_selected_objects_info(big_bb);
+    const size_t  count   = objects.size();
+    const size_t  cols    = size_t(std::ceil(std::sqrt(double(count))));
+    const size_t  rows    = (count + cols - 1) / cols;
+
+    // Every cell fits the largest footprint, spaced by the arrange spacing, or 5 mm when that is left on auto.
+    const float  spacing = m_canvas.get_arrange_settings().distance;
+    const double gap     = spacing > 0.f ? double(spacing) : 5.;
+    double       pitch_x = 0.;
+    double       pitch_y = 0.;
+    for (const ObjectInfo &obj : objects) {
+        pitch_x = std::max(pitch_x, obj.bbox.size().x());
+        pitch_y = std::max(pitch_y, obj.bbox.size().y());
+    }
+    pitch_x += gap;
+    pitch_y += gap;
+
+    // Keep the current order: rows from back to front, each row from left to right.
+    std::sort(objects.begin(), objects.end(), [](const ObjectInfo &a, const ObjectInfo &b) { return a.center.y() > b.center.y(); });
+    for (size_t row = 0; row < rows; ++row)
+        std::sort(objects.begin() + row * cols, objects.begin() + std::min(count, (row + 1) * cols),
+                  [](const ObjectInfo &a, const ObjectInfo &b) { return a.center.x() < b.center.x(); });
+
+    if (!take_snapshot("Arrange in grid"))
+        return false;
+
+    get_selection().setup_cache();
+
+    const Vec3d center = big_bb.center();
+    for (size_t i = 0; i < count; ++i) {
+        const size_t row    = i / cols;
+        const size_t col    = i % cols;
+        // A short last row is centered under the full ones.
+        const size_t in_row = std::min(cols, count - row * cols);
+        const double x      = center.x() + (double(col) - 0.5 * double(in_row - 1)) * pitch_x;
+        const double y      = center.y() + (0.5 * double(rows - 1) - double(row)) * pitch_y;
+        const Vec3d  displacement(x - objects[i].center.x(), y - objects[i].center.y(), 0.);
+        if (displacement.norm() > 1e-6)
+            apply_transformation(objects[i].object_idx, objects[i].instance_idx, displacement);
+    }
+
+    finish_operation();
+    return true;
+}
+
 double GLGizmoAlignment::get_current_coord(std::string operation_name, BoundingBoxf3 &bbox)
 {
     double current_coord = 0.0;

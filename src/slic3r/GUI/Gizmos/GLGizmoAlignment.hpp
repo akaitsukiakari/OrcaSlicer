@@ -62,6 +62,11 @@ public:
     bool can_align(AlignType type, bool align_parent = false) const;
     bool can_distribute(AlignType type) const;
 
+    // Orca fork: lay the selected instances out in a grid of near-equal rows and columns (4 make 2x2), keeping their
+    // current order, centered where they are now.
+    bool arrange_grid();
+    bool can_arrange_grid() const;
+
     std::vector<ObjectInfo> get_selected_objects_info(BoundingBoxf3 &big_bb) const;
     double                  get_current_coord(std::string operation_name, BoundingBoxf3 &bbox);
     Vec3d                   generate_displacement(std::string operation_name, double offset);

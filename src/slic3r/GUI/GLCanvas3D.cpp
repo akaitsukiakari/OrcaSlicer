@@ -109,6 +109,7 @@
 #include "Gizmos/GLGizmoUtils.hpp"
 
 #include "slic3r/GUI/Gizmos/GLGizmoPainterBase.hpp"
+#include "slic3r/GUI/Gizmos/GLGizmoAlignment.hpp"
 #include "slic3r/Utils/UndoRedo.hpp"
 #include "slic3r/Utils/MacDarkMode.hpp"
 #include "slic3r/plugin/PluginManager.hpp"
@@ -4133,6 +4134,10 @@ bool GLCanvas3D::handle_shortcut(const KeyChord& chord)
     case Shortcut::ArrangePlate:
         if (!m_gizmos.is_running())
             post_event(SimpleEvent(EVT_GLCANVAS_ARRANGE_PARTPLATE));
+        break;
+    case Shortcut::ArrangeGrid:
+        if (m_canvas_type == ECanvasType::CanvasView3D)
+            GLGizmoAlignment(*this).arrange_grid();
         break;
     case Shortcut::Orient:       post_event(SimpleEvent(EVT_GLCANVAS_ORIENT)); break;
     case Shortcut::OrientPlate:  post_event(SimpleEvent(EVT_GLCANVAS_ORIENT_PARTPLATE)); break;

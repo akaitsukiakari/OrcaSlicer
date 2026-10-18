@@ -14376,13 +14376,15 @@ void Plater::priv::set_project_name(const wxString& project_name)
     BOOST_LOG_TRIVIAL(trace) << __FUNCTION__ << __LINE__ << " project is:" << project_name;
     m_project_name = project_name;
     //update topbar title
+    // Orca fork: show the version next to the project name.
+    const wxString version = " - OrcaSlicer " + from_u8(GUI_App::format_display_version());
 #ifdef __APPLE__
-    wxGetApp().mainframe->SetTitle(m_project_name);
+    wxGetApp().mainframe->SetTitle(m_project_name + version);
     if (!m_project_name.IsEmpty())
         wxGetApp().mainframe->update_title_colour_after_set_title();
 #else
-    wxGetApp().mainframe->SetTitle(m_project_name + " - OrcaSlicer");
-    wxGetApp().mainframe->topbar()->SetTitle(m_project_name);
+    wxGetApp().mainframe->SetTitle(m_project_name + version);
+    wxGetApp().mainframe->topbar()->SetTitle(m_project_name + version);
 #endif
 }
 
@@ -14397,11 +14399,13 @@ void Plater::priv::update_title_dirty_status()
     else
         title = m_project_name;
 
+    // Orca fork: show the version next to the project name.
+    title += " - OrcaSlicer " + from_u8(GUI_App::format_display_version());
 #ifdef __APPLE__
     wxGetApp().mainframe->SetTitle(title);
     wxGetApp().mainframe->update_title_colour_after_set_title();
 #else
-    wxGetApp().mainframe->SetTitle(title + " - OrcaSlicer");
+    wxGetApp().mainframe->SetTitle(title);
     wxGetApp().mainframe->topbar()->SetTitle(title);
 #endif    
 }
