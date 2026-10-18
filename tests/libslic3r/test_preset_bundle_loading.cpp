@@ -2494,6 +2494,43 @@ TEST_CASE("Published 3MF overlays only the author-selected process keys onto the
     CHECK_THAT(control_bundle.prints.get_edited_preset().config.opt_float("layer_height"), Catch::Matchers::WithinAbs(0.28, 0.000001));
 }
 
+// Opening a project while keeping the user's printer and filaments imports only the process
+// preset; the printer and filament presets, filament colours and purge data stay the user's.
+TEST_CASE("Keeping the printer and filaments imports only the project's process", "[Preset][Bundle]")
+{
+    DynamicPrintConfig config = DynamicPrintConfig::full_print_config();
+    config.opt<ConfigOptionStrings>("filament_colour")->values = { "#FF0000" };
+    config.opt_float("layer_height") = 0.28;                                      // process
+    config.opt<ConfigOptionFloats>("nozzle_diameter")->values = { 0.6 };          // printer
+    config.opt<ConfigOptionInts>("nozzle_temperature")->values = { 240 };         // filament
+    config.opt<ConfigOptionFloats>("flush_multiplier")->values = { 2. };          // purge data
+    config.option<ConfigOptionStrings>("compatible_machine_expression_group", true)->values = { "printer_model==\"Other\"" };
+    Preset::normalize(config);
+
+    PresetBundle bundle;
+    const std::string              printer_name     = bundle.printers.get_edited_preset().name;
+    const size_t                   printers_size    = bundle.printers.size();
+    const size_t                   filaments_size   = bundle.filaments.size();
+    const std::vector<std::string> filament_presets = bundle.filament_presets;
+    const std::vector<double>      nozzle_diameter  = bundle.printers.get_edited_preset().config.opt<ConfigOptionFloats>("nozzle_diameter")->values;
+    const std::vector<std::string> filament_colour  = bundle.project_config.opt<ConfigOptionStrings>("filament_colour")->values;
+    const std::vector<double>      flush_multiplier = bundle.project_config.opt<ConfigOptionFloats>("flush_multiplier")->values;
+
+    bundle.load_config_model("test.3mf", std::move(config), Semver(), nullptr, true);
+
+    CHECK_THAT(bundle.prints.get_edited_preset().config.opt_float("layer_height"), Catch::Matchers::WithinAbs(0.28, 0.000001));
+    // The author's printer restriction is dropped so the process stays compatible with the user's printer.
+    CHECK(bundle.prints.get_edited_preset().compatible_printers_condition().empty());
+
+    CHECK(bundle.printers.get_edited_preset().name == printer_name);
+    CHECK(bundle.printers.size() == printers_size);
+    CHECK(bundle.printers.get_edited_preset().config.opt<ConfigOptionFloats>("nozzle_diameter")->values == nozzle_diameter);
+    CHECK(bundle.filaments.size() == filaments_size);
+    CHECK(bundle.filament_presets == filament_presets);
+    CHECK(bundle.project_config.opt<ConfigOptionStrings>("filament_colour")->values == filament_colour);
+    CHECK(bundle.project_config.opt<ConfigOptionFloats>("flush_multiplier")->values == flush_multiplier);
+}
+
 // The published printer overlay is restricted to the publishable retraction/z-hop allowlist:
 // matching-size vectors apply, mismatched vectors are reported as skipped, and any other
 // printer-class key (e.g. machine_start_gcode) is contract-excluded (never applied, never

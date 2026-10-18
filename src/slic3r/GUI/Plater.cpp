@@ -8970,6 +8970,7 @@ std::vector<size_t> Plater::priv::load_files(const std::vector<fs::path>& input_
     bool load_config = strategy & LoadStrategy::LoadConfig;
     bool imperial_units = strategy & LoadStrategy::ImperialUnits;
     bool silence = strategy & LoadStrategy::Silence;
+    bool keep_printer_and_filaments = load_config && (strategy & LoadStrategy::KeepPrinterAndFilaments);
 
     BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << boost::format(": load_model %1%, load_config %2%, input_files size %3%")%load_model %load_config %input_files.size();
 
@@ -9194,7 +9195,8 @@ std::vector<size_t> Plater::priv::load_files(const std::vector<fs::path>& input_
 
                     // 1. add extruder for prusa model if the number of existing extruders is not enough
                     // 2. add extruder for BBS or Other model if only import geometry
-                    if (en_3mf_file_type == En3mfType::From_Prusa || (load_model && !load_config)) {
+                    // 3. add extruder when keeping the user's filaments and the project uses more slots
+                    if (en_3mf_file_type == En3mfType::From_Prusa || (load_model && (!load_config || keep_printer_and_filaments))) {
                         std::set<int> extruderIds;
                         for (ModelObject *o : model.objects) {
                             if (o->config.option("extruder")) extruderIds.insert(o->config.extruder());
@@ -9427,10 +9429,16 @@ std::vector<size_t> Plater::priv::load_files(const std::vector<fs::path>& input_
                     // embedded presets must not pollute the receiver's library, the overlay applies
                     // the published keys to the receiver's own presets instead).
                     if ((project_presets.size() > 0) && load_config && !published_config.published) {
-                        // load project embedded presets
+                        // load project embedded presets (only the process ones when keeping the
+                        // user's printer and filaments)
+                        std::vector<Preset*> presets_to_load = project_presets;
+                        if (keep_printer_and_filaments)
+                            presets_to_load.erase(std::remove_if(presets_to_load.begin(), presets_to_load.end(),
+                                                                 [](const Preset* preset) { return preset->type != Preset::TYPE_PRINT; }),
+                                                  presets_to_load.end());
                         PresetsConfigSubstitutions preset_substitutions;
                         PresetBundle &             preset_bundle = *wxGetApp().preset_bundle;
-                        preset_substitutions                     = preset_bundle.load_project_embedded_presets(project_presets, ForwardCompatibilitySubstitutionRule::Enable);
+                        preset_substitutions                     = preset_bundle.load_project_embedded_presets(presets_to_load, ForwardCompatibilitySubstitutionRule::Enable);
                         if (is_bambu_studio_project)
                             log_substitutions(preset_substitutions, path.string());
                         else if (!preset_substitutions.empty())
@@ -9560,7 +9568,7 @@ std::vector<size_t> Plater::priv::load_files(const std::vector<fs::path>& input_
                         }
 
                         auto choise = wxGetApp().app_config->get("no_warn_when_modified_gcodes");
-                        if (!published_config.published && (choise.empty() || choise != "true")) {
+                        if (!published_config.published && !keep_printer_and_filaments && (choise.empty() || choise != "true")) {
                             // BBS: first validate the printer
                             // validate the system profiles
                             std::set<std::string> modified_gcodes;
@@ -9611,7 +9619,7 @@ std::vector<size_t> Plater::priv::load_files(const std::vector<fs::path>& input_
                                     for (std::string& id : ids->values)
                                         id = agent->to_orca_filament_id(id);
                             }
-                            preset_bundle->load_config_model(filename.string(), std::move(config), file_version, &published_config);
+                            preset_bundle->load_config_model(filename.string(), std::move(config), file_version, &published_config, keep_printer_and_filaments);
                             if (config_loaded_out != nullptr)
                                 *config_loaded_out = true;
 
@@ -9746,7 +9754,7 @@ std::vector<size_t> Plater::priv::load_files(const std::vector<fs::path>& input_
                                 sync_loaded_project_filament_config(proj_cfg);
                             }
                             // Update filament combobox after loading config
-                            if (published_config.published) {
+                            if (published_config.published || keep_printer_and_filaments) {
                                 q->update_filament_colors_in_full_config();
                                 wxGetApp().plater()->sidebar().update_all_preset_comboboxes();
                                 wxGetApp().plater()->sidebar().update_dynamic_filament_list();
@@ -16068,11 +16076,12 @@ int Plater::new_project(bool skip_confirm, bool silent, const wxString& project_
     return wxID_YES;
 }
 
-LoadType determine_load_type(std::string filename, std::string override_setting = "");
+LoadType determine_load_type(std::string filename, std::string override_setting = "", bool* keep_printer_and_filaments = nullptr);
 
 // BBS: FIXME, missing resotre logic
 void Plater::load_project(wxString const& filename2,
-    wxString const& originfile)
+    wxString const& originfile,
+    bool keep_printer_and_filaments)
 {
     model().calib_pa_pattern.reset(nullptr);
     model().plates_custom_gcodes.clear();
@@ -16129,13 +16138,15 @@ void Plater::load_project(wxString const& filename2,
     } else if (originfile != "-") {
         strategy = strategy | LoadStrategy::Restore;
     } else {
-        switch (determine_load_type(filename.ToStdString())) {
+        switch (determine_load_type(filename.ToStdString(), "", &keep_printer_and_filaments)) {
             case LoadType::OpenProject: break; // Do nothing
             case LoadType::LoadGeometry:; strategy = LoadStrategy::LoadModel; break;
             default: return; // User cancelled
         }
     }
     bool load_restore = strategy & LoadStrategy::Restore;
+    if (keep_printer_and_filaments && !load_restore)
+        strategy = strategy | LoadStrategy::KeepPrinterAndFilaments;
 
     // Take the Undo / Redo snapshot.
     reset();
@@ -18515,6 +18526,7 @@ private:
     wxColour          m_def_color = wxColour(255, 255, 255);
     int               m_action{1};
     bool              m_remember_choice{false};
+    bool              m_keep_printer_and_filaments{false};
 
 public:
     ProjectDropDialog(const std::string &filename);
@@ -18529,6 +18541,7 @@ public:
 
     int       get_action() const { return m_action; }
     void      set_action(int index) { m_action = index; }
+    bool      keep_printer_and_filaments() const { return m_keep_printer_and_filaments; }
 
     wxBoxSizer *create_remember_checkbox(wxString title, wxWindow* parent, wxString tooltip);
 
@@ -18579,11 +18592,50 @@ ProjectDropDialog::ProjectDropDialog(const std::string &filename)
     }, wxVERTICAL);
     radio_group->SetMinSize(wxSize(FromDIP(300),-1));
     radio_group->SetSelection(get_action() - 1);
-    radio_group->Bind(wxEVT_COMMAND_RADIOBOX_SELECTED, [this, radio_group](wxCommandEvent &e) {
-        set_action(radio_group->GetSelection() + 1);
-    });
 
     m_sizer_main->Add(radio_group, 0, wxEXPAND | wxLEFT | wxRIGHT, FromDIP(20));
+
+    // Option of "Open as project": take only the process settings from the file. Remembered
+    // between loads.
+    m_keep_printer_and_filaments = wxGetApp().app_config->get_bool("import_project_keep_printer_filaments");
+    auto keep_checkbox = new ::CheckBox(this);
+    keep_checkbox->SetValue(m_keep_printer_and_filaments);
+    auto keep_label = new wxStaticText(this, wxID_ANY, _L("Keep my printer and filaments"));
+    keep_label->SetFont(::Label::Body_14);
+    const wxString keep_tooltip = _L("Load only the process settings from the project. Your current printer, filaments and filament colors are kept.");
+    keep_checkbox->SetToolTip(keep_tooltip);
+    keep_label->SetToolTip(keep_tooltip);
+    keep_checkbox->Bind(wxEVT_TOGGLEBUTTON, [this, keep_checkbox](wxCommandEvent &e) {
+        m_keep_printer_and_filaments = keep_checkbox->GetValue();
+        e.Skip();
+    });
+    keep_label->Bind(wxEVT_LEFT_DOWN, [this, keep_checkbox](wxMouseEvent &e) {
+        if (keep_checkbox->IsEnabled()) {
+            keep_checkbox->SetValue(!keep_checkbox->GetValue());
+            m_keep_printer_and_filaments = keep_checkbox->GetValue();
+        }
+        e.Skip();
+    });
+    auto update_keep_enabled = [this, keep_checkbox, keep_label]() {
+        const bool enable = static_cast<LoadType>(get_action()) == LoadType::OpenProject;
+        keep_checkbox->Enable(enable);
+        keep_label->Enable(enable);
+        keep_label->SetForegroundColour(StateColor::darkModeColorFor(enable ? wxColour("#363636") : wxColour("#909090")));
+        keep_label->Refresh();
+    };
+    update_keep_enabled();
+
+    wxBoxSizer *keep_sizer = new wxBoxSizer(wxHORIZONTAL);
+    keep_sizer->Add(keep_checkbox, 0, wxALIGN_CENTER_VERTICAL);
+    keep_sizer->AddSpacer(FromDIP(6));
+    keep_sizer->Add(keep_label, 0, wxALIGN_CENTER_VERTICAL);
+    m_sizer_main->AddSpacer(FromDIP(4));
+    m_sizer_main->Add(keep_sizer, 0, wxLEFT | wxRIGHT, FromDIP(44));
+
+    radio_group->Bind(wxEVT_COMMAND_RADIOBOX_SELECTED, [this, radio_group, update_keep_enabled](wxCommandEvent &e) {
+        set_action(radio_group->GetSelection() + 1);
+        update_keep_enabled();
+    });
 
     m_sizer_main->AddSpacer(FromDIP(10));
 
@@ -18652,6 +18704,9 @@ void ProjectDropDialog::on_select_ok(wxCommandEvent &event)
                 break;
         }
     }
+
+    if (static_cast<LoadType>(get_action()) == LoadType::OpenProject)
+        wxGetApp().app_config->set_bool("import_project_keep_printer_filaments", m_keep_printer_and_filaments);
 
     EndModal(wxID_OK);
 }
@@ -18830,7 +18885,7 @@ bool Plater::load_files(const wxArrayString& filenames)
     return res;
 }
 
-LoadType determine_load_type(std::string filename, std::string override_setting)
+LoadType determine_load_type(std::string filename, std::string override_setting, bool* keep_printer_and_filaments)
 {
     std::string setting;
 
@@ -18848,6 +18903,8 @@ LoadType determine_load_type(std::string filename, std::string override_setting)
             int      choice    = dlg.get_action();
             LoadType load_type = static_cast<LoadType>(choice);
             wxGetApp().app_config->set("import_project_action", std::to_string(choice));
+            if (keep_printer_and_filaments != nullptr)
+                *keep_printer_and_filaments = load_type == LoadType::OpenProject && dlg.keep_printer_and_filaments();
 
             // BBS: jump to plater panel
             wxGetApp().mainframe->select_tab(TAB_ID_PREPARE);
@@ -18869,14 +18926,16 @@ bool Plater::open_3mf_file(const fs::path &file_path)
 
     bool not_empty_plate = !model().objects.empty();
     bool load_setting_ask_when_relevant = wxGetApp().app_config->get(SETTING_PROJECT_LOAD_BEHAVIOUR) == OPTION_PROJECT_LOAD_BEHAVIOUR_ASK_WHEN_RELEVANT;
-    LoadType load_type = determine_load_type(filename, (not_empty_plate && load_setting_ask_when_relevant) ? OPTION_PROJECT_LOAD_BEHAVIOUR_ALWAYS_ASK : "");
+    bool keep_printer_and_filaments = false;
+    LoadType load_type = determine_load_type(filename, (not_empty_plate && load_setting_ask_when_relevant) ? OPTION_PROJECT_LOAD_BEHAVIOUR_ALWAYS_ASK : "",
+                                             &keep_printer_and_filaments);
 
     if (load_type == LoadType::Unknown) return false;
 
     switch (load_type) {
         case LoadType::OpenProject: {
             if (wxGetApp().can_load_project())
-                load_project(from_path(file_path), "<loadall>");
+                load_project(from_path(file_path), "<loadall>", keep_printer_and_filaments);
             break;
         }
         case LoadType::LoadGeometry: {

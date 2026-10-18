@@ -6110,13 +6110,16 @@ void PresetBundle::convert_filament_preset_name(const std::string& machine_name,
 }
 // Load a config file from a boost property_tree. This is a private method called from load_config_file.
 // is_external == false on if called from ConfigWizard
-void PresetBundle::load_config_file_config(const std::string &name_or_path, bool is_external, DynamicPrintConfig &&config, Semver file_version, bool selected, PublishedConfig *published_config)
+void PresetBundle::load_config_file_config(const std::string &name_or_path, bool is_external, DynamicPrintConfig &&config, Semver file_version, bool selected, PublishedConfig *published_config, bool keep_printer_and_filaments)
 {
     PrinterTechnology printer_technology = Preset::printer_technology(config);
 
     // A "published" 3MF project keeps the user's currently-selected presets and overlays only
     // the author-selected published keys onto the edited presets.
     const bool is_published = published_config != nullptr && published_config->published;
+    // Keep the user's printer and filament presets (and filament colours); only the process
+    // preset comes from the file. Not combined with published mode, which keeps all presets.
+    const bool keep_printer_and_filaments_only = keep_printer_and_filaments && !is_published;
 
     auto clear_compatible_printers = [](DynamicPrintConfig& config){
         ConfigOption *opt_compatible = config.optptr("compatible_printers");
@@ -6267,7 +6270,11 @@ void PresetBundle::load_config_file_config(const std::string &name_or_path, bool
             //BBS: add different settings logic
             BOOST_LOG_TRIVIAL(debug) << __FUNCTION__ << boost::format(": load print preset from print_settings_id");
             std::set<std::string> print_different_keys_set = project_different_keys(different_values[0]);
-            if (!print_compatible_printers.empty()) {
+            if (keep_printer_and_filaments_only) {
+                // The process is applied to the user's printer, not the author's: drop the
+                // author's printer restrictions so it is not flagged incompatible.
+                compatible_printers_condition_values[0].clear();
+            } else if (!print_compatible_printers.empty()) {
                 ConfigOptionStrings* compatible_printers = config.option<ConfigOptionStrings>("compatible_printers", true);
                 compatible_printers->values = print_compatible_printers;
             }
@@ -6276,6 +6283,8 @@ void PresetBundle::load_config_file_config(const std::string &name_or_path, bool
 
             //clear compatible printers
             clear_compatible_printers(config);
+        }
+        if (!is_published && !keep_printer_and_filaments_only) {
 
             std::set<std::string> printer_different_keys_set = project_different_keys(different_values[num_filaments + 1]);
             //BBS: add config related logs
@@ -6384,13 +6393,15 @@ void PresetBundle::load_config_file_config(const std::string &name_or_path, bool
                     this->filament_presets[i] = loaded->name;
                 }
             }
-        } // !is_published
+        } // !is_published && !keep_printer_and_filaments_only
 
-        // Load the project config values. In published mode only the plate/bed geometry keys
-        // cross over (the receiver must not inherit the author's filament/purge data).
-        this->project_config.apply_only(config, is_published ? s_project_options_published : s_project_options);
+        // Load the project config values. In published mode, and when keeping the user's printer
+        // and filaments, only the plate/bed geometry keys cross over (the receiver must not
+        // inherit the author's filament/purge data).
+        const bool keep_filament_data = is_published || keep_printer_and_filaments_only;
+        this->project_config.apply_only(config, keep_filament_data ? s_project_options_published : s_project_options);
         // Older projects inherit one-element mixed defaults, regardless of their filament count.
-        if (!is_published)
+        if (!keep_filament_data)
             resize_mixed_filament_metadata(this->project_config, num_filaments, num_filaments);
 
         break;
@@ -7541,7 +7552,7 @@ void PresetBundle::load_config_file_config(const std::string &name_or_path, bool
     //BBS
     //const std::string &physical_printer = config.option<ConfigOptionString>("physical_printer_settings_id", true)->value;
     const std::string physical_printer;
-    if (!is_published) {
+    if (!is_published && !keep_printer_and_filaments_only) {
         if (this->printers.get_edited_preset().is_external || physical_printer.empty()) {
             this->physical_printers.unselect_printer();
         } else {
