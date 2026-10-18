@@ -89,6 +89,7 @@ constexpr std::array<ShortcutInfo, size_t(Shortcut::Count)> shortcut_table = {{
     // Placement
     SHORTCUT(Arrange,           "arrange",            L("Arrange all objects"),                                  PLATER, { 'A' }),
     SHORTCUT(ArrangePlate,      "arrange_plate",      L("Arrange objects on selected plates"),                   PLATER, { 'A', SHIFT }),
+    SHORTCUT(ArrangeGrid,       "arrange_grid",       L("Arrange selected objects in a grid"),                   PLATER, { 'G' }),
     SHORTCUT(Orient,            "orient",             L("Auto orient all/selected objects"),                     PLATER, { 'Q' }),
     SHORTCUT(OrientPlate,       "orient_plate",       L("Auto orient all objects on current plate"),             PLATER, { 'Q', SHIFT }),
     STEPPING(MoveSelectionLeft,   "move_selection_left",    L("Move selection 10mm in negative X direction"),    PLATER, { WXK_LEFT }),

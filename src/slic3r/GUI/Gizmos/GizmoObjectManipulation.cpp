@@ -1042,6 +1042,22 @@ void GizmoObjectManipulation::do_render_move_window(ImGuiWrapper *imgui_wrapper,
             align_icon(0, AlignType::DISTRIBUTE_X, GLGizmosManager::IC_DISTRIBUTE_X, GLGizmosManager::IC_DISTRIBUTE_X_DARK, _L("Distribute left-right") + " (X)");
             align_icon(1, AlignType::DISTRIBUTE_Y, GLGizmosManager::IC_DISTRIBUTE_Y, GLGizmosManager::IC_DISTRIBUTE_Y_DARK, _L("Distribute front-back") + " (Y)");
             align_icon(2, AlignType::DISTRIBUTE_Z, GLGizmosManager::IC_DISTRIBUTE_Z, GLGizmosManager::IC_DISTRIBUTE_Z_DARK, _L("Distribute top-bottom") + " (Z)");
+
+            // Orca fork: grid arrange of the selected objects.
+            row = 2;
+            ImGui::SetCursorPosY(center_in_row(row, ImGui::GetTextLineHeight()));
+            imgui_wrapper->text(_L("Grid"));
+            ImGui::SameLine(int(caption_max + space_size));
+            ImGui::SetCursorPosY(center_in_row(row, button_height));
+            const bool can_grid = m_alignment_helper.can_arrange_grid();
+            if (imgui_wrapper->button(_L("Arrange in grid"), ImVec2(0.f, button_height), can_grid))
+                m_alignment_helper.arrange_grid();
+            if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
+                wxString text = _L("Arrange selected objects in a grid");
+                if (!can_grid)
+                    text += "\n" + _L("Select at least 2 objects");
+                imgui_wrapper->tooltip(text, imgui_wrapper->calc_text_size(text).x + 3 * space_size);
+            }
         }
         ImGui::PopStyleVar();
         ImGui::SetCursorPosY(row_top(row + 1));

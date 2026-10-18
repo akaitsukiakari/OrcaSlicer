@@ -2385,6 +2385,17 @@ void MenuFactory::append_menu_item_align_distribute(wxMenu *menu)
                 [can, type]() { return can(type); }, m_parent);
     }
 
+    // Orca fork: grid arrange of the selected objects.
+    align_distribute_menu->AppendSeparator();
+    append_menu_item(
+        align_distribute_menu, wxID_ANY, _L("Arrange in grid"), _L("Arrange selected objects in a grid"),
+        [](wxCommandEvent &) { GLGizmoAlignment(*plater()->get_view3D_canvas3D()).arrange_grid(); }, "", nullptr,
+        []() {
+            return plater()->canvas3D()->get_canvas_type() == GLCanvas3D::ECanvasType::CanvasView3D &&
+                   GLGizmoAlignment(*plater()->get_view3D_canvas3D()).can_arrange_grid();
+        },
+        m_parent);
+
     // Anything that can be distributed can also be aligned, and aligning in X has no extra condition.
     append_submenu(menu, align_distribute_menu, wxID_ANY, _L("Align/Distribute"), _L("Align and distribute objects"), "",
         [can]() { return can(AlignType::X_MIN); }, m_parent);
