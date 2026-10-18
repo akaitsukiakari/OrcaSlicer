@@ -606,6 +606,8 @@ public:
     void            set_skip_version(bool skip = true);
     void            no_new_version();
     static std::string format_display_version();
+    // Orca fork: "Build <commit> (<build time>)", shown on the splash and About screens.
+    static wxString    format_build_label();
     std::string     format_IP(const std::string& ip);
     void            show_dialog(wxString msg);
     void            push_notification(const MachineObject* obj, wxString msg, wxString title = wxEmptyString, UserNotificationStyle style = UserNotificationStyle::UNS_NORMAL);
