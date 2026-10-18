@@ -18596,11 +18596,11 @@ ProjectDropDialog::ProjectDropDialog(const std::string &filename)
     m_sizer_main->Add(radio_group, 0, wxEXPAND | wxLEFT | wxRIGHT, FromDIP(20));
 
     // Option of "Open as project": take only the process settings from the file. Remembered
-    // between loads.
+    // between loads. Placed inside the radio group, right under its option.
     m_keep_printer_and_filaments = wxGetApp().app_config->get_bool("import_project_keep_printer_filaments");
-    auto keep_checkbox = new ::CheckBox(this);
+    auto keep_checkbox = new ::CheckBox(radio_group);
     keep_checkbox->SetValue(m_keep_printer_and_filaments);
-    auto keep_label = new wxStaticText(this, wxID_ANY, _L("Keep my printer and filaments"));
+    auto keep_label = new wxStaticText(radio_group, wxID_ANY, _L("Keep my printer and filaments"));
     keep_label->SetFont(::Label::Body_14);
     const wxString keep_tooltip = _L("Load only the process settings from the project. Your current printer, filaments and filament colors are kept.");
     keep_checkbox->SetToolTip(keep_tooltip);
@@ -18629,8 +18629,12 @@ ProjectDropDialog::ProjectDropDialog(const std::string &filename)
     keep_sizer->Add(keep_checkbox, 0, wxALIGN_CENTER_VERTICAL);
     keep_sizer->AddSpacer(FromDIP(6));
     keep_sizer->Add(keep_label, 0, wxALIGN_CENTER_VERTICAL);
-    m_sizer_main->AddSpacer(FromDIP(4));
-    m_sizer_main->Add(keep_sizer, 0, wxLEFT | wxRIGHT, FromDIP(44));
+    // The group lays its options out in a one-column grid sized for them; let it take an extra row.
+    if (auto grid = dynamic_cast<wxFlexGridSizer*>(radio_group->GetSizer())) {
+        grid->SetRows(0);
+        grid->Insert(1, keep_sizer, 0, wxLEFT | wxBOTTOM, FromDIP(24));
+        radio_group->InvalidateBestSize();
+    }
 
     radio_group->Bind(wxEVT_COMMAND_RADIOBOX_SELECTED, [this, radio_group, update_keep_enabled](wxCommandEvent &e) {
         set_action(radio_group->GetSelection() + 1);
