@@ -2639,6 +2639,7 @@ static void set_mass_locator(GCodeProcessor &processor, const Print &print)
             GCodeProcessorResult::ObjectMass &mass = object_masses[o.first_instance + instance];
             mass.assembly                          = assembly;
             mass.name                              = object->model_object()->name;
+            mass.object_id                         = object->model_object()->id().id;
             // Copies of another rotation or scale slice as objects of their own, so number them in the model object.
             mass.instance = int(std::find(model_instances.begin(), model_instances.end(), object->instances()[instance].model_instance) -
                                 model_instances.begin());

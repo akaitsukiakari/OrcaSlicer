@@ -61,8 +61,8 @@ class ArrangeJob : public Job
     // Arrange settings read on the main thread in prepare(); see GLCanvas3D::ArrangeSettings.
     bool m_keep_on_plate{false};
     int  m_mode{0};
-    // Per m_selected item, by itemid, when arranging all plates: its object's index and a
-    // rough print time for ranking the items.
+    // Per m_selected item, by itemid, when arranging all plates: its object's index and its
+    // print time for ranking the items, from slicing or else estimated.
     std::vector<int>    m_selected_object;
     std::vector<double> m_selected_print_time;
     // Names of the items left where they were because they did not fit on the plate.
@@ -124,6 +124,12 @@ double bed_stride_x(const Plater* plater);
 double bed_stride_y(const Plater* plater);
 
 arrangement::ArrangeParams init_arrange_params(Plater *p);
+
+// Print times of object instances from the plates' last valid slices, for arranging by print time.
+// They are kept when an arrangement moves the instances and dropped when an instance's shape changes.
+// Main thread only.
+void update_sliced_print_times(Plater &plater);
+std::optional<double> sliced_print_time(const ModelInstance &instance);
 
 }} // namespace Slic3r::GUI
 

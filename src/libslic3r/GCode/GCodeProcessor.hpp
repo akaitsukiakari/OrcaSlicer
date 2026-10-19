@@ -298,9 +298,12 @@ inline constexpr float DEFAULT_FILAMENT_DENSITY = 1.245f;
             BoundingBoxf3    box;
             // Of an object, whether it is an assembly.
             bool assembly{ false };
-            // Of an object instance, its model object's name and its index among that object's instances.
+            // Of an object instance, its model object's name and id and its index among that object's instances.
             std::string name;
+            size_t      object_id{ 0 };
             int         instance{ -1 };
+            // Of an object instance, the normal mode time of the moves from its extrusions to the next object's.
+            float       print_time{ 0.f };
 
             Sum  total() const { return printed_up_to_layer.empty() ? Sum{} : printed_up_to_layer.back(); }
             void add(const Sum &sum, const BoundingBoxf3 &extent, size_t layer);
@@ -690,6 +693,8 @@ inline constexpr float DEFAULT_FILAMENT_DENSITY = 1.245f;
             // and the injector's SKIPPABLE relocation. stNone unless inside a SKIPPABLE_* region.
             SkipType skippable_type{ SkipType::stNone };
             unsigned int move_id{ 0 };
+            // The object instance it prints for, by index in GCodeProcessorResult::object_masses, or -1.
+            int object{ -1 };
             unsigned int g1_line_id{ 0 };
             unsigned int remaining_internal_g1_lines{ 0 };
             unsigned int layer_id{ 0 };
@@ -1182,6 +1187,8 @@ inline constexpr float DEFAULT_FILAMENT_DENSITY = 1.245f;
         SkipType m_skippable_type{SkipType::stNone};
         int m_object_label_id{-1};
         MassLocator m_mass_locator;
+        // The object instance of the last extrusion, by index in object_masses, or -1.
+        int m_mass_object{-1};
         float m_print_z{0.0f};
         std::vector<float> m_remaining_volume;
         ExtruderTemps m_filament_nozzle_temp;

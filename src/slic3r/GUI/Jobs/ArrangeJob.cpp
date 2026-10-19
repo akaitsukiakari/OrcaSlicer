@@ -5,6 +5,7 @@
 #include "libslic3r/MTUtils.hpp"
 #include "libslic3r/PresetBundle.hpp"
 #include "libslic3r/Model.hpp"
+#include "libslic3r/GCode/GCodeProcessor.hpp"
 #include "libslic3r/ModelArrange.hpp"
 #include "libslic3r/IMEXArrange.hpp"
 
@@ -199,18 +200,71 @@ void ArrangeJob::clear_input()
     current_plate_index = 0;
 }
 
+namespace {
+struct SlicedPrintTime
+{
+    double seconds;
+    // What the time depends on besides the settings: the instance's rotation and scale and its object's parts.
+    Matrix3d linear;
+    double   volume;
+};
+// By model object id and instance index.
+std::map<std::pair<size_t, int>, SlicedPrintTime> sliced_print_times;
+
+double object_volume(const ModelObject &object)
+{
+    double volume = 0.;
+    for (const ModelVolume *mv : object.volumes)
+        if (mv->is_model_part())
+            volume += std::max(0.f, mv->mesh().stats().volume) * std::abs(mv->get_matrix().matrix().block<3, 3>(0, 0).determinant());
+    return volume;
+}
+
+Matrix3d instance_linear(const ModelInstance &instance) { return instance.get_matrix().matrix().block<3, 3>(0, 0); }
+} // namespace
+
 // A rough print time in seconds, only good for ranking objects against each other before
 // slicing: the object's volume at a typical flow plus a fixed cost per layer.
 static double estimate_print_time(const ModelInstance &mi, double height, double layer_height)
 {
     constexpr double flow_mm3_per_s = 10.;
     constexpr double seconds_per_layer = 2.;
-    double volume = 0.;
-    for (const ModelVolume *mv : mi.get_object()->volumes)
-        if (mv->is_model_part())
-            volume += std::max(0.f, mv->mesh().stats().volume) *
-                      std::abs((mi.get_matrix() * mv->get_matrix()).matrix().block<3, 3>(0, 0).determinant());
+    const double volume = object_volume(*mi.get_object()) * std::abs(instance_linear(mi).determinant());
     return volume / flow_mm3_per_s + (layer_height > 0. ? height / layer_height : 0.) * seconds_per_layer;
+}
+
+void update_sliced_print_times(Plater &plater)
+{
+    PartPlateList &plates = plater.get_partplate_list();
+    const Model   &model  = plater.model();
+    for (int i = 0; i < plates.get_plate_count(); ++i) {
+        PartPlate   *plate  = plates.get_plate(i);
+        GCodeResult *result = nullptr;
+        plate->get_print(nullptr, &result, nullptr);
+        if (result == nullptr || !plate->is_slice_result_valid())
+            continue;
+        for (const GCodeProcessorResult::ObjectMass &mass : result->object_masses) {
+            if (mass.print_time <= 0.f || mass.instance < 0)
+                continue;
+            const auto object = std::find_if(model.objects.begin(), model.objects.end(),
+                                             [&mass](const ModelObject *mo) { return mo->id().id == mass.object_id; });
+            if (object == model.objects.end() || size_t(mass.instance) >= (*object)->instances.size())
+                continue;
+            sliced_print_times[{ mass.object_id, mass.instance }] = { mass.print_time, instance_linear(*(*object)->instances[mass.instance]),
+                                                                       object_volume(**object) };
+        }
+    }
+}
+
+std::optional<double> sliced_print_time(const ModelInstance &instance)
+{
+    const ModelObject &object = *instance.get_object();
+    const int          index  = int(std::find(object.instances.begin(), object.instances.end(), &instance) - object.instances.begin());
+    const auto         it     = sliced_print_times.find({ object.id().id, index });
+    if (it == sliced_print_times.end() || !it->second.linear.isApprox(instance_linear(instance)) ||
+        std::abs(it->second.volume - object_volume(object)) > 1e-6 * std::max(1., it->second.volume))
+        return std::nullopt;
+    return it->second.seconds;
 }
 
 ArrangePolygon ArrangeJob::prepare_arrange_polygon(void* model_instance)
@@ -319,6 +373,10 @@ void ArrangeJob::prepare_all() {
     Model &model = m_plater->model();
     bool selected_is_locked = false;
     const double layer_height = wxGetApp().preset_bundle->full_config().opt_float("layer_height");
+    update_sliced_print_times(*m_plater);
+    // Per item, by itemid, its estimate and its time from slicing, if any.
+    std::vector<double>                estimates;
+    std::vector<std::optional<double>> sliced;
 
     // Go through the objects and check if inside the selection
     for (size_t oidx = 0; oidx < model.objects.size(); ++oidx) {
@@ -339,7 +397,8 @@ void ArrangeJob::prepare_all() {
                 ap.itemid = cont.size();
                 if (&cont == &m_selected) {
                     m_selected_object.push_back(int(oidx));
-                    m_selected_print_time.push_back(estimate_print_time(*mi, ap.height, layer_height));
+                    estimates.push_back(estimate_print_time(*mi, ap.height, layer_height));
+                    sliced.push_back(sliced_print_time(*mi));
                 }
                 cont.emplace_back(std::move(ap));
             }
@@ -354,6 +413,17 @@ void ArrangeJob::prepare_all() {
         }
     }
 
+
+    // Scale the estimates of the items not sliced to the times of those that were.
+    double sliced_sum = 0., estimated_sum = 0.;
+    for (size_t i = 0; i < sliced.size(); ++i)
+        if (sliced[i]) {
+            sliced_sum += *sliced[i];
+            estimated_sum += estimates[i];
+        }
+    const double scale = sliced_sum > 0. && estimated_sum > 0. ? sliced_sum / estimated_sum : 1.;
+    for (size_t i = 0; i < sliced.size(); ++i)
+        m_selected_print_time.push_back(sliced[i] ? *sliced[i] : estimates[i] * scale);
 
     // If the selection was empty arrange everything
     //if (m_selected.empty()) m_selected.swap(m_unselected);

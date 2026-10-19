@@ -541,6 +541,8 @@ void GCodeProcessor::TimeMachine::calculate_time(GCodeProcessorResult& result, P
         if (block.skippable_type != SkipType::stNone)
             result.skippable_part_time[block.skippable_type] += block.time();
         result.moves[block.move_id].time[static_cast<size_t>(mode)] = block_time;
+        if (mode == PrintEstimatedStatistics::ETimeMode::Normal && block.object >= 0 && size_t(block.object) < result.object_masses.size())
+            result.object_masses[block.object].print_time += block_time;
         gcode_time.cache += block_time;
         //BBS
         if (block.flags.prepare_stage)
@@ -3714,6 +3716,7 @@ void GCodeProcessor::reset()
     m_layer_id = 0;
     m_cp_color.reset();
     m_mass_locator = nullptr;
+    m_mass_object  = -1;
 
     m_producer = EProducer::Unknown;
 
@@ -5246,6 +5249,7 @@ void GCodeProcessor::process_G1(const std::array<std::optional<double>, 4>& axes
         block.distance = distance;
         block.g1_line_id = m_g1_line_id;
         block.move_id = static_cast<unsigned int>(m_result.moves.size());
+        block.object = m_mass_object;
         block.remaining_internal_g1_lines = remaining_internal_g1_lines.has_value() ? *remaining_internal_g1_lines : 0;
         block.layer_id = std::max<unsigned int>(1, m_layer_id);
         block.flags.prepare_stage = m_processing_start_custom_gcode;
@@ -7304,6 +7308,8 @@ void GCodeProcessor::add_object_mass(int filament_id, float volume)
 {
     // Skirt, prime tower and custom G-code belong to no object.
     const ExtrusionRole role = m_extrusion_role;
+    if (role == erSkirt || role == erWipeTower || role == erCustom || role == erBrim)
+        m_mass_object = -1;
     if (volume <= 0.f || role == erNone || role == erSkirt || role == erWipeTower || role == erCustom || role == erMixed)
         return;
 
@@ -7337,6 +7343,11 @@ void GCodeProcessor::add_object_mass(int filament_id, float volume)
     };
     // At the nozzle's height, which the layers print at.
     const MassLocation location = m_mass_locator(0.5 * (start + end) + half_height, !part);
+    // The time of this move and of those up to the next extrusion goes to the instance. Its block is queued already.
+    m_mass_object = location.object;
+    for (TimeMachine &machine : m_time_processor.machines)
+        if (!machine.blocks.empty() && machine.blocks.back().move_id == m_result.moves.size())
+            machine.blocks.back().object = location.object;
     if (part) {
         add(m_result.object_masses, location.object);
         add(m_result.body_masses, location.body);
