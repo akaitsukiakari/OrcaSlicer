@@ -851,6 +851,9 @@ public:
     bool plugins_block_slicing() const;
     //BBS: select the plate by index
     int select_plate(int plate_index, bool need_slice = false);
+    // Make the plate the selected objects sit on the current plate, when they all sit on one.
+    // Called after the user selects objects in the 3D scene or the object list.
+    void select_plate_of_selection();
     //BBS: update progress result
     void apply_background_progress();
     //BBS: select the plate by hover_id

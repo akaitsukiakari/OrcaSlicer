@@ -1551,6 +1551,13 @@ void GLCanvas3D::load_arrange_settings()
     load_bool("allow_multi_materials_on_same_plate", m_arrange_settings_fff_seq_print.allow_multi_materials_on_same_plate);
     load_bool("avoid_extrusion_cali_region",         m_arrange_settings_fff.avoid_extrusion_cali_region);
     load_bool("avoid_extrusion_cali_region",         m_arrange_settings_fff_seq_print.avoid_extrusion_cali_region);
+    load_bool("keep_on_plate",                       m_arrange_settings_fff.keep_on_plate);
+    load_bool("keep_on_plate",                       m_arrange_settings_fff_seq_print.keep_on_plate);
+    {
+        std::string value = wxGetApp().app_config->get("arrange", "arrange_mode");
+        if (value.size() == 1 && value[0] >= '0' && value[0] <= '3')
+            m_arrange_settings_fff.mode = m_arrange_settings_fff_seq_print.mode = ArrangeSettings::Mode(value[0] - '0');
+    }
 
     //BBS: add specific arrange settings
     m_arrange_settings_fff_seq_print.is_seq_print = true;
@@ -5050,6 +5057,8 @@ void GLCanvas3D::on_mouse(wxMouseEvent& evt)
 
                             m_gizmos.update_data();
                             post_event(SimpleEvent(EVT_GLCANVAS_OBJECT_SELECT));
+                            if (m_canvas_type == CanvasView3D)
+                                wxGetApp().plater()->select_plate_of_selection();
                             m_dirty = true;
                         }
                     }
@@ -5343,6 +5352,8 @@ void GLCanvas3D::on_mouse(wxMouseEvent& evt)
                     m_selection.add(volume_idx, true, true);
                     m_gizmos.refresh_on_off_state();
                     post_event(SimpleEvent(EVT_GLCANVAS_OBJECT_SELECT));
+                    if (m_canvas_type == CanvasView3D)
+                        wxGetApp().plater()->select_plate_of_selection();
                     m_gizmos.update_data();
                     // BBS
                     //wxGetApp().obj_manipul()->set_dirty();
@@ -6609,6 +6620,7 @@ void GLCanvas3D::_render_arrange_menu(float left, float right, float bottom, flo
     std::string dist_key = "min_object_distance", rot_key = "enable_rotation";
     std::string multi_material_key = "allow_multi_materials_on_same_plate";
     std::string avoid_extrusion_key = "avoid_extrusion_cali_region";
+    const std::string keep_on_plate_key = "keep_on_plate", arrange_mode_key = "arrange_mode";
     std::string postfix;
     //BBS:
     bool seq_print = false;
@@ -6667,6 +6679,27 @@ void GLCanvas3D::_render_arrange_menu(float left, float right, float bottom, flo
         if (settings_out.enable_rotation == true) { imgui->disabled_end(); }
     }
 
+    if (ptech == ptFFF) {
+        ImGui::Separator();
+        if (imgui->bbl_checkbox(_L("Keep objects on the plate when arranging one plate"), settings_out.keep_on_plate))
+            appcfg->set("arrange", keep_on_plate_key, settings_out.keep_on_plate);
+
+        const std::vector<std::string> modes = {
+            _u8L_CONTEXT("Default", "Arrange mode"),
+            _u8L("Fewest plates"),
+            // TRN Arrange mode: fill the first plates with the objects that take longest to print.
+            _u8L("Longest plates first"),
+            _u8L("One object per plate"),
+        };
+        int mode = int(settings_out.mode);
+        ImGui::AlignTextToFramePadding();
+        if (imgui->combo(_L("Arrange all plates"), modes, mode, 0, 0.f, imgui->scaled(10.f))) {
+            settings_out.mode = ArrangeSettings::Mode(mode);
+            appcfg->set("arrange", arrange_mode_key, std::to_string(mode));
+        }
+        ImGui::PopItemWidth();
+    }
+
     ImGui::Separator();
     ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(15.0f, 10.0f));
     if (imgui->button(_L("Arrange"))) {
@@ -6691,6 +6724,8 @@ void GLCanvas3D::_render_arrange_menu(float left, float right, float bottom, flo
         appcfg->erase("arrange", rot_key);
         appcfg->erase("arrange", multi_material_key);
         appcfg->erase("arrange", avoid_extrusion_key);
+        appcfg->erase("arrange", keep_on_plate_key);
+        appcfg->erase("arrange", arrange_mode_key);
     }
     ImGui::PopStyleVar(1);
     imgui->end();
@@ -12588,6 +12623,8 @@ void GLCanvas3D::_update_selection_from_hover()
 
     m_gizmos.update_data();
     post_event(SimpleEvent(EVT_GLCANVAS_OBJECT_SELECT));
+    if (m_canvas_type == CanvasView3D)
+        wxGetApp().plater()->select_plate_of_selection();
     m_dirty = true;
 }
 

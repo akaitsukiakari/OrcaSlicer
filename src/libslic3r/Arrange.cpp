@@ -334,6 +334,8 @@ void fill_config(PConf& pcfg, const ArrangeParams &params) {
     // Allow parallel execution.
     pcfg.parallel = params.parallel;
 
+    pcfg.first_fit = params.first_fit;
+
     // BBS: excluded regions in BBS bed
     for (auto& poly : params.excluded_regions)
         process_arrangeable(poly, pcfg.m_excluded_regions);

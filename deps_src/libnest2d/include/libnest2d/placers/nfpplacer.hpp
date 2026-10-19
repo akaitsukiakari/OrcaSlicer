@@ -125,6 +125,8 @@ struct NfpPConfig {
 
     //BBS: sort function for selector
     std::function<bool(_Item<RawShape>& i1, _Item<RawShape>& i2)> sortfunc;
+    // Selector: put each item into the first bin it fits, instead of the bin it fits best.
+    bool first_fit = false;
     //BBS: excluded region for V4 bed
     std::vector<_Item<RawShape> > m_excluded_regions;
     _ItemGroup<RawShape> m_excluded_items;

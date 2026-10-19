@@ -22732,6 +22732,31 @@ int Plater::select_plate(int plate_index, bool need_slice)
     return ret;
 }
 
+void Plater::select_plate_of_selection()
+{
+    // Deferred, so the plate switch neither runs inside the canvas mouse handler that is
+    // starting a drag nor inside the object list's selection event.
+    CallAfter([this]() {
+        if (wxGetApp().is_closing() || !is_view3D_shown())
+            return;
+        const Selection& selection = p->get_selection();
+        if (selection.is_empty() || selection.is_wipe_tower())
+            return;
+        std::set<int> plates;
+        for (const auto& [obj_idx, instances] : selection.get_content())
+            for (int inst_idx : instances)
+                plates.insert(p->partplate_list.find_instance(obj_idx, inst_idx));
+        if (plates.size() != 1)
+            return;
+        const int plate_idx = *plates.begin();
+        if (plate_idx < 0 || plate_idx == p->partplate_list.get_curr_plate_index())
+            return;
+        select_plate(plate_idx);
+        // Selecting a plate selects its row in the object list; put the objects back.
+        wxGetApp().obj_list()->update_selections();
+    });
+}
+
 int Plater::select_sliced_plate(int plate_index, bool skip_zoom)
 {
     int ret = 0;

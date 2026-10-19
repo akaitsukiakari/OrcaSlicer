@@ -5,6 +5,8 @@
 #include <map>
 #include "libslic3r/Polygon.hpp"
 #include <exception>
+#include <functional>
+#include <string>
 #include <optional>
 #include <vector>
 
@@ -55,6 +57,22 @@ class ArrangeJob : public Job
 
     // BBS: add flag for whether on current part plate
     bool only_on_partplate{false};
+
+    // Arrange settings read on the main thread in prepare(); see GLCanvas3D::ArrangeSettings.
+    bool m_keep_on_plate{false};
+    int  m_mode{0};
+    // Per m_selected item, by itemid, when arranging all plates: its object's index and a
+    // rough print time for ranking the items.
+    std::vector<int>    m_selected_object;
+    std::vector<double> m_selected_print_time;
+    // Names of the items left where they were because they did not fit on the plate.
+    std::vector<std::string> m_left_in_place;
+
+    // The arrange modes, run in process() on the items prepared for them.
+    using Arranger = std::function<void(ArrangePolygons& items, const ArrangePolygons& fixed, const arrangement::ArrangeParams& params)>;
+    void arrange_keeping_on_plate(const Arranger& arrange);
+    void arrange_fewest_plates(const Arranger& arrange);
+    void arrange_one_object_per_plate(const Arranger& arrange);
 
     // clear m_selected and m_unselected, reserve space for next usage
     void clear_input();
