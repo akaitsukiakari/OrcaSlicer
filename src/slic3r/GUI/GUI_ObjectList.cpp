@@ -288,6 +288,7 @@ ObjectList::ObjectList(wxWindow* parent) :
         }
         else {
             selection_changed();
+            wxGetApp().plater()->select_plate_of_selection();
         }
 #ifndef __WXMSW__
         set_tooltip_for_item(this->get_mouse_position_in_control());

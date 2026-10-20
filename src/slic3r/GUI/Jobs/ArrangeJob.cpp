@@ -4,6 +4,8 @@
 #include "libslic3r/SVG.hpp"
 #include "libslic3r/MTUtils.hpp"
 #include "libslic3r/PresetBundle.hpp"
+#include "libslic3r/Model.hpp"
+#include "libslic3r/GCode/GCodeProcessor.hpp"
 #include "libslic3r/ModelArrange.hpp"
 #include "libslic3r/IMEXArrange.hpp"
 
@@ -36,6 +38,7 @@
 #include "libslic3r/ExPolygon.hpp"
 #include "libslic3r/libslic3r.h"
 #include <numeric>
+#include <functional>
 #include <exception>
 #include "libslic3r/LifecycleEvents.hpp"
 #include <optional>
@@ -187,11 +190,81 @@ void ArrangeJob::clear_input()
     m_locked.clear();
     m_unarranged.clear();
     m_uncompatible_plates.clear();
+    m_selected_object.clear();
+    m_selected_print_time.clear();
+    m_left_in_place.clear();
     m_selected.reserve(count + 1 /* for optional wti */);
     m_unselected.reserve(count + 1 /* for optional wti */);
     m_unprintable.reserve(cunprint /* for optional wti */);
     m_locked.reserve(count + 1 /* for optional wti */);
     current_plate_index = 0;
+}
+
+namespace {
+struct SlicedPrintTime
+{
+    double seconds;
+    // What the time depends on besides the settings: the instance's rotation and scale and its object's parts.
+    Matrix3d linear;
+    double   volume;
+};
+// By model object id and instance index.
+std::map<std::pair<size_t, int>, SlicedPrintTime> sliced_print_times;
+
+double object_volume(const ModelObject &object)
+{
+    double volume = 0.;
+    for (const ModelVolume *mv : object.volumes)
+        if (mv->is_model_part())
+            volume += std::max(0.f, mv->mesh().stats().volume) * std::abs(mv->get_matrix().matrix().block<3, 3>(0, 0).determinant());
+    return volume;
+}
+
+Matrix3d instance_linear(const ModelInstance &instance) { return instance.get_matrix().matrix().block<3, 3>(0, 0); }
+} // namespace
+
+// A rough print time in seconds, only good for ranking objects against each other before
+// slicing: the object's volume at a typical flow plus a fixed cost per layer.
+static double estimate_print_time(const ModelInstance &mi, double height, double layer_height)
+{
+    constexpr double flow_mm3_per_s = 10.;
+    constexpr double seconds_per_layer = 2.;
+    const double volume = object_volume(*mi.get_object()) * std::abs(instance_linear(mi).determinant());
+    return volume / flow_mm3_per_s + (layer_height > 0. ? height / layer_height : 0.) * seconds_per_layer;
+}
+
+void update_sliced_print_times(Plater &plater)
+{
+    PartPlateList &plates = plater.get_partplate_list();
+    const Model   &model  = plater.model();
+    for (int i = 0; i < plates.get_plate_count(); ++i) {
+        PartPlate   *plate  = plates.get_plate(i);
+        GCodeResult *result = nullptr;
+        plate->get_print(nullptr, &result, nullptr);
+        if (result == nullptr || !plate->is_slice_result_valid())
+            continue;
+        for (const GCodeProcessorResult::ObjectMass &mass : result->object_masses) {
+            if (mass.print_time <= 0.f || mass.instance < 0)
+                continue;
+            const auto object = std::find_if(model.objects.begin(), model.objects.end(),
+                                             [&mass](const ModelObject *mo) { return mo->id().id == mass.object_id; });
+            if (object == model.objects.end() || size_t(mass.instance) >= (*object)->instances.size())
+                continue;
+            sliced_print_times[{ mass.object_id, mass.instance }] = { mass.print_time, instance_linear(*(*object)->instances[mass.instance]),
+                                                                       object_volume(**object) };
+        }
+    }
+}
+
+std::optional<double> sliced_print_time(const ModelInstance &instance)
+{
+    const ModelObject &object = *instance.get_object();
+    const int          index  = int(std::find(object.instances.begin(), object.instances.end(), &instance) - object.instances.begin());
+    const auto         it     = sliced_print_times.find({ object.id().id, index });
+    if (it == sliced_print_times.end() || !it->second.linear.isApprox(instance_linear(instance)) ||
+        std::abs(it->second.volume - object_volume(object)) > 1e-6 * std::max(1., it->second.volume))
+        return std::nullopt;
+    return it->second.seconds;
 }
 
 ArrangePolygon ArrangeJob::prepare_arrange_polygon(void* model_instance)
@@ -299,6 +372,11 @@ void ArrangeJob::prepare_all() {
 
     Model &model = m_plater->model();
     bool selected_is_locked = false;
+    const double layer_height = wxGetApp().preset_bundle->full_config().opt_float("layer_height");
+    update_sliced_print_times(*m_plater);
+    // Per item, by itemid, its estimate and its time from slicing, if any.
+    std::vector<double>                estimates;
+    std::vector<std::optional<double>> sliced;
 
     // Go through the objects and check if inside the selection
     for (size_t oidx = 0; oidx < model.objects.size(); ++oidx) {
@@ -317,6 +395,11 @@ void ArrangeJob::prepare_all() {
                 ArrangePolygons& cont = mo->instances[i]->printable ? m_selected :m_unprintable;
 
                 ap.itemid = cont.size();
+                if (&cont == &m_selected) {
+                    m_selected_object.push_back(int(oidx));
+                    estimates.push_back(estimate_print_time(*mi, ap.height, layer_height));
+                    sliced.push_back(sliced_print_time(*mi));
+                }
                 cont.emplace_back(std::move(ap));
             }
             else
@@ -330,6 +413,17 @@ void ArrangeJob::prepare_all() {
         }
     }
 
+
+    // Scale the estimates of the items not sliced to the times of those that were.
+    double sliced_sum = 0., estimated_sum = 0.;
+    for (size_t i = 0; i < sliced.size(); ++i)
+        if (sliced[i]) {
+            sliced_sum += *sliced[i];
+            estimated_sum += estimates[i];
+        }
+    const double scale = sliced_sum > 0. && estimated_sum > 0. ? sliced_sum / estimated_sum : 1.;
+    for (size_t i = 0; i < sliced.size(); ++i)
+        m_selected_print_time.push_back(sliced[i] ? *sliced[i] : estimates[i] * scale);
 
     // If the selection was empty arrange everything
     //if (m_selected.empty()) m_selected.swap(m_unselected);
@@ -576,6 +670,9 @@ void ArrangeJob::prepare()
     m_plater->get_notification_manager()->bbl_close_plateinfo_notification();
 
     params = init_arrange_params(m_plater);
+    const GLCanvas3D::ArrangeSettings &settings = m_plater->canvas3D()->get_arrange_settings();
+    m_keep_on_plate = settings.keep_on_plate;
+    m_mode          = int(settings.mode);
 
     //BBS update extruder params and speed table before arranging
     const Slic3r::DynamicPrintConfig& config = wxGetApp().preset_bundle->full_config();
@@ -659,6 +756,24 @@ void ArrangeJob::check_unprintable()
     }
 }
 
+// Makes the arranger take the items in decreasing order of key, ahead of its own order.
+static void order_items(ArrangePolygons &items, const std::function<double(const ArrangePolygon &)> &key)
+{
+    std::vector<size_t> order(items.size());
+    std::iota(order.begin(), order.end(), 0);
+    std::stable_sort(order.begin(), order.end(), [&](size_t a, size_t b) { return key(items[a]) > key(items[b]); });
+    for (size_t rank = 0; rank < order.size(); ++rank)
+        items[order[rank]].priority = int(order.size() - rank);
+}
+
+static double item_area(const ArrangePolygon &ap) { return std::abs(ap.poly.area()); }
+
+static double item_longest_side(const ArrangePolygon &ap)
+{
+    const BoundingBox bb = get_extents(ap.poly);
+    return double(std::max(bb.size().x(), bb.size().y()));
+}
+
 void ArrangeJob::process(Ctl &ctl)
 {
     static const auto arrangestr = _u8L("Arranging");
@@ -710,10 +825,28 @@ void ArrangeJob::process(Ctl &ctl)
             <<", bbox:"<<get_extents(item.poly).min.transpose()<<","<<get_extents(item.poly).max.transpose();
     }
 
-    const ArrangePolygons before = imex.active() ? m_selected : ArrangePolygons();
-    arrangement::arrange(m_selected, m_unselected, bedpts, params);
-    if (!ctl.was_canceled())
-        imex.finish(m_selected, before, m_unselected, params);
+    const Arranger arrange = [&](ArrangePolygons &items, const ArrangePolygons &fixed, const arrangement::ArrangeParams &p) {
+        const ArrangePolygons before = imex.active() ? items : ArrangePolygons();
+        arrangement::arrange(items, fixed, bedpts, p);
+        if (!ctl.was_canceled())
+            imex.finish(items, before, fixed, p);
+    };
+    using Mode = GLCanvas3D::ArrangeSettings::Mode;
+    if (only_on_partplate && m_keep_on_plate)
+        arrange_keeping_on_plate(arrange);
+    else if (!only_on_partplate && m_mode == int(Mode::FewestPlates))
+        arrange_fewest_plates(arrange);
+    else if (!only_on_partplate && m_mode == int(Mode::LongestPlates)) {
+        // Fill each plate before the next, longest prints first.
+        arrangement::ArrangeParams p = params;
+        p.first_fit = true;
+        order_items(m_selected, [this](const ArrangePolygon &ap) { return m_selected_print_time[ap.itemid]; });
+        arrange(m_selected, m_unselected, p);
+    }
+    else if (!only_on_partplate && m_mode == int(Mode::OnePerPlate))
+        arrange_one_object_per_plate(arrange);
+    else
+        arrange(m_selected, m_unselected, params);
 
     // sort by item id
     std::sort(m_selected.begin(), m_selected.end(), [](auto a, auto b) {return a.itemid < b.itemid; });
@@ -742,6 +875,109 @@ void ArrangeJob::process(Ctl &ctl)
     ctl.update_status(100,
         ctl.was_canceled() ? _u8L("Arranging canceled.") :
         we_have_unpackable_items ? _u8L("Arranging complete, but some items were not able to be arranged. Reduce spacing and try again.") : _u8L("Arranging done."));
+}
+
+// The arranger packs greedily in one order, so an item it cannot place gets a new plate
+// even when another order fits everything. Try a few orders and keep the first that fits
+// the plate; when none does, leave the items that never fit where they were.
+void ArrangeJob::arrange_keeping_on_plate(const Arranger &arrange)
+{
+    const std::vector<std::function<double(const ArrangePolygon &)>> orders = { nullptr, item_area, item_longest_side };
+    const auto on_plate = [](const ArrangePolygons &items) {
+        return std::count_if(items.begin(), items.end(), [](const ArrangePolygon &ap) { return ap.bed_idx == 0; });
+    };
+
+    ArrangePolygons best;
+    for (const auto &key : orders) {
+        ArrangePolygons items = m_selected;
+        if (key)
+            order_items(items, key);
+        arrange(items, m_unselected, params);
+        if (best.empty() || on_plate(items) > on_plate(best))
+            best = std::move(items);
+        if (on_plate(best) == ptrdiff_t(best.size()) || params.stopcondition())
+            break;
+    }
+
+    for (size_t i = 0; i < best.size(); ++i)
+        if (best[i].bed_idx != 0) {
+            // Keep it where it is: bed 0 maps back to this plate, and an applied item is not moved.
+            best[i] = m_selected[i];
+            best[i].bed_idx    = 0;
+            best[i].is_applied = 1;
+            m_left_in_place.push_back(best[i].name);
+        }
+    m_selected = std::move(best);
+}
+
+// The arranger already opens a plate only for an item no plate has room for, so fewer
+// plates come from a better packing order: try a few and keep the one using fewest plates.
+void ArrangeJob::arrange_fewest_plates(const Arranger &arrange)
+{
+    const std::vector<std::function<double(const ArrangePolygon &)>> orders = { nullptr, item_area, item_longest_side };
+    // Unarranged items first, then the plates used.
+    const auto cost = [](const ArrangePolygons &items) {
+        int unfit = 0, plates = 0;
+        for (const ArrangePolygon &ap : items)
+            if (ap.bed_idx < 0)
+                ++unfit;
+            else
+                plates = std::max(plates, ap.bed_idx + 1);
+        return std::make_pair(unfit, plates);
+    };
+
+    ArrangePolygons best;
+    for (const auto &key : orders) {
+        ArrangePolygons items = m_selected;
+        if (key)
+            order_items(items, key);
+        arrange(items, m_unselected, params);
+        if (params.stopcondition())
+            return;
+        if (best.empty() || cost(items) < cost(best))
+            best = std::move(items);
+    }
+    m_selected = std::move(best);
+}
+
+// Arranges each object, with all its instances, alone on the next plate. An object whose
+// instances need more than one plate takes as many as it needs.
+void ArrangeJob::arrange_one_object_per_plate(const Arranger &arrange)
+{
+    std::map<int, std::vector<size_t>> objects;
+    for (size_t i = 0; i < m_selected.size(); ++i)
+        objects[m_selected[i].itemid < int(m_selected_object.size()) ? m_selected_object[m_selected[i].itemid] : -1].push_back(i);
+
+    int plate = 0;
+    for (const auto &[obj_idx, indices] : objects) {
+        if (params.stopcondition())
+            return;
+        ArrangePolygons items;
+        for (size_t i : indices)
+            items.push_back(m_selected[i]);
+        // The fixed items of this plate and the ones after it, numbered from this plate.
+        ArrangePolygons fixed;
+        for (const ArrangePolygon &ap : m_unselected)
+            if (ap.bed_idx >= plate) {
+                fixed.push_back(ap);
+                fixed.back().bed_idx -= plate;
+            }
+        arrange(items, fixed, params);
+
+        int next = plate;
+        for (size_t k = 0; k < indices.size(); ++k) {
+            ArrangePolygon &ap = m_selected[indices[k]];
+            ap = items[k];
+            if (ap.bed_idx >= 0) {
+                ap.bed_idx += plate;
+                if (ap.bed_idx >= MAX_NUM_PLATES)
+                    ap.bed_idx = -1; // out of plates, left beside them like any item that does not fit
+                else
+                    next = std::max(next, ap.bed_idx + 1);
+            }
+        }
+        plate = next;
+    }
 }
 
 ArrangeJob::ArrangeJob() : m_plater{wxGetApp().plater()} { }
@@ -858,6 +1094,13 @@ void ArrangeJob::finalize(bool canceled, std::exception_ptr &eptr) {
     m_plater->update();
     // BBS
     //wxGetApp().obj_manipul()->set_dirty();
+
+    if (!m_left_in_place.empty())
+        m_plater->get_notification_manager()->push_notification(NotificationType::BBLPlateInfo,
+            NotificationManager::NotificationLevel::WarningNotificationLevel,
+            GUI::format(_L_PLURAL("%1% object did not fit on the plate and was left where it was:\n%2%",
+                                  "%1% objects did not fit on the plate and were left where they were:\n%2%", m_left_in_place.size()),
+                        m_left_in_place.size(), concat_strings(std::set<std::string>(m_left_in_place.begin(), m_left_in_place.end()))));
 
     if (!m_unarranged.empty()) {
         std::set<std::string> names;

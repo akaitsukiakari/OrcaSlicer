@@ -7211,6 +7211,10 @@ struct Plater::priv
     bool m_ignore_event{false};
     bool m_slice_all{false};
     bool m_is_slicing {false};
+    // Arrange all plates by print time once the Slice all that gets the times finishes, and
+    // then without asking again about the times still missing.
+    bool m_arrange_after_slice_all{false};
+    bool m_arrange_sliced_all{false};
     // Missing-plugin set signatures (sorted full refs joined by '\n'), one per notification. They
     // gate plugin-load re-validation and avoid needlessly recreating the notification when the set
     // is unchanged. Whether missing plugins block slicing is derived directly from PluginResolver
@@ -13457,6 +13461,19 @@ void Plater::priv::on_process_completed(SlicingProcessCompletedEvent &evt)
         this->preview->reload_print(false);
         q->mark_plate_toolbar_image_dirty();
         q->SetDropTarget(new PlaterDropTarget(*main_frame, *q));
+        if (m_arrange_after_slice_all) {
+            m_arrange_after_slice_all = false;
+            // A single plate's slice since then means the Slice all never ran.
+            if (m_slice_all && !has_error && !evt.cancelled())
+                q->CallAfter([this]() {
+                    q->select_view_3D("3D");
+                    q->set_prepare_state(Job::PREPARE_STATE_DEFAULT);
+                    m_arrange_sliced_all = true;
+                    q->arrange();
+                });
+            else if (m_slice_all)
+                notification_manager->push_notification(_u8L("The objects were not arranged, as slicing did not finish."));
+        }
     }
     else
     {
@@ -13470,6 +13487,10 @@ void Plater::priv::on_process_completed(SlicingProcessCompletedEvent &evt)
         if (ret) {
             BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << boost::format(":slicing all, plate %1% can not be sliced, will stop")%m_cur_slice_plate;
             m_is_slicing = false;
+            if (m_arrange_after_slice_all) {
+                m_arrange_after_slice_all = false;
+                notification_manager->push_notification(_u8L("The objects were not arranged, as slicing did not finish."));
+            }
         }
         //not the last plate
         update_fff_scene_only_shells();
@@ -13739,6 +13760,7 @@ void Plater::priv::on_action_slice_all(SimpleEvent&)
                 if (dlg.IsCheckBoxChecked())
                     wxGetApp().app_config->set("imex_pre_slice_warnings", "false");
                 if (result != wxID_YES) {
+                    m_arrange_after_slice_all = false;
                     q->select_view_3D("3D");
                     return;
                 }
@@ -22105,6 +22127,46 @@ GLCanvas3D* Plater::get_current_canvas3D(bool exclude_preview)
 void Plater::arrange()
 {
     auto &w = get_ui_job_worker();
+    if (w.is_idle() && !std::exchange(p->m_arrange_sliced_all, false) && get_prepare_state() == Job::PREPARE_STATE_DEFAULT &&
+        printer_technology() == ptFFF && !p->m_is_slicing &&
+        canvas3D()->get_arrange_settings().mode == GLCanvas3D::ArrangeSettings::Mode::LongestPlates) {
+        // Arranging by print time works from the times of the last slice; offer to get the missing ones first.
+        update_sliced_print_times(*this);
+        size_t missing = 0;
+        for (size_t obj_idx = 0; obj_idx < model().objects.size(); ++obj_idx)
+            for (size_t inst_idx = 0; inst_idx < model().objects[obj_idx]->instances.size(); ++inst_idx) {
+                const ModelInstance *instance = model().objects[obj_idx]->instances[inst_idx];
+                // Only what is on a plate gets sliced.
+                if (instance->printable && p->partplate_list.find_instance(int(obj_idx), int(inst_idx)) >= 0 && !sliced_print_time(*instance))
+                    ++missing;
+            }
+        if (missing > 0) {
+            // Not from inside the arrange menu's frame, which the dialog's event loop would render again.
+            CallAfter([this, missing]() {
+                MessageDialog dlg(this,
+                                  format_wxstr(_L_PLURAL("%1% object has no print time from slicing yet, so its time would only be estimated.\n"
+                                                         "Slice all plates first and arrange when slicing finishes?",
+                                                         "%1% objects have no print time from slicing yet, so their times would only be estimated.\n"
+                                                         "Slice all plates first and arrange when slicing finishes?", missing),
+                                               missing),
+                                  _L("Arrange"), wxYES_NO | wxCANCEL | wxICON_QUESTION);
+                dlg.SetButtonLabel(wxID_YES, _L("Slice first"), true);
+                dlg.SetButtonLabel(wxID_NO, _L("Use estimates"));
+                const int answer = dlg.ShowModal();
+                if (answer == wxID_YES) {
+                    p->m_arrange_after_slice_all = true;
+                    get_notification_manager()->push_notification(
+                        _u8L("Slicing all plates to get the print times. The objects will be arranged when slicing finishes."));
+                    wxPostEvent(this, SimpleEvent(EVT_GLTOOLBAR_SLICE_ALL));
+                } else if (answer == wxID_NO) {
+                    set_prepare_state(Job::PREPARE_STATE_DEFAULT);
+                    p->m_arrange_sliced_all = true;
+                    arrange();
+                }
+            });
+            return;
+        }
+    }
     if (w.is_idle()) {
         p->take_snapshot(_u8L("Arrange"));
         replace_job(w, std::make_unique<ArrangeJob>());
@@ -22730,6 +22792,31 @@ int Plater::select_plate(int plate_index, bool need_slice)
 
     BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << boost::format(" %1%: plate %2%, return %3%")%__LINE__ %plate_index %ret;
     return ret;
+}
+
+void Plater::select_plate_of_selection()
+{
+    // Deferred, so the plate switch neither runs inside the canvas mouse handler that is
+    // starting a drag nor inside the object list's selection event.
+    CallAfter([this]() {
+        if (wxGetApp().is_closing() || !is_view3D_shown())
+            return;
+        const Selection& selection = p->get_selection();
+        if (selection.is_empty() || selection.is_wipe_tower())
+            return;
+        std::set<int> plates;
+        for (const auto& [obj_idx, instances] : selection.get_content())
+            for (int inst_idx : instances)
+                plates.insert(p->partplate_list.find_instance(obj_idx, inst_idx));
+        if (plates.size() != 1)
+            return;
+        const int plate_idx = *plates.begin();
+        if (plate_idx < 0 || plate_idx == p->partplate_list.get_curr_plate_index())
+            return;
+        select_plate(plate_idx);
+        // Selecting a plate selects its row in the object list; put the objects back.
+        wxGetApp().obj_list()->update_selections();
+    });
 }
 
 int Plater::select_sliced_plate(int plate_index, bool skip_zoom)

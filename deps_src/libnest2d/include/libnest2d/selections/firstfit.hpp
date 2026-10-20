@@ -116,7 +116,7 @@ public:
             typename Placer::PackResult result, result_best, result_firstfit;
             int j = 0;
             while(!was_packed && !cancelled()) {
-                for(; j < placers.size() && !was_packed && !cancelled(); j++) {
+                for(; j < placers.size() && !was_packed && !cancelled() && !(pconfig.first_fit && bed_id_firstfit >= 0); j++) {
                     result = placers[j].pack(*it, rem(it, store_));
                     score = result.score();
                     score_all_plates = score;

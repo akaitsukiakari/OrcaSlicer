@@ -131,6 +131,10 @@ struct ArrangeParams {
 
     bool do_final_align = true;
 
+    /// Put each item on the first bed it fits rather than the bed it fits best,
+    /// so the earlier beds are filled before the later ones get anything.
+    bool first_fit = false;
+
     //BBS: add specific arrange params
     bool  allow_multi_materials_on_same_plate = true;
     bool  avoid_extrusion_cali_region         = true;

@@ -611,6 +611,11 @@ public:
         //BBS: add more arrangeSettings
         bool is_seq_print        = false;
         bool  align_to_y_axis    = false;
+        // Arranging one plate leaves every object on it instead of moving the ones that don't fit to a new plate.
+        bool  keep_on_plate      = false;
+        // How arranging all plates spreads the objects over them.
+        enum class Mode { Default, FewestPlates, LongestPlates, OnePerPlate };
+        Mode  mode               = Mode::Default;
     };
 
     struct OrientSettings
