@@ -6049,22 +6049,22 @@ void Sidebar::on_bed_type_change(BedType bed_type)
 
 // Remembers the Spoolman spool behind each synced filament, and updates the cost and density
 // of the user presets linked to their filaments.
-static void sync_spoolman_filaments(const SyncAmsInfoDialog::SyncResult& sync_result, bool appended)
+static void sync_spoolman_filaments(const SyncAmsInfoDialog::SyncResult& sync_result)
 {
     auto& synced = Spoolman::synced_filaments();
     synced.clear();
     const auto& slot_spools = Spoolman::slot_spools();
-    // Appending colors puts the slots after the existing filaments.
-    if (slot_spools.empty() || (appended && sync_result.direct_sync))
+    if (slot_spools.empty())
         return;
 
     auto slot_index = [](const std::string& ams_id, const std::string& slot_id) {
         return std::atoi(ams_id.c_str()) * 4 + std::atoi(slot_id.c_str());
     };
-    // Without a mapping, filament i is synced from entry i of the list.
+    // Without a mapping, the filaments are the slots holding a known filament, in list order.
     std::vector<int> list_slots;
     for (const auto& entry : wxGetApp().preset_bundle->filament_ams_list)
-        list_slots.push_back(slot_index(entry.second.opt_string("ams_id", 0u), entry.second.opt_string("slot_id", 0u)));
+        if (!entry.second.opt_string("filament_id", 0u).empty())
+            list_slots.push_back(slot_index(entry.second.opt_string("ams_id", 0u), entry.second.opt_string("slot_id", 0u)));
 
     auto&    bundle = *wxGetApp().preset_bundle;
     wxString updated;
@@ -6494,7 +6494,7 @@ void Sidebar::sync_ams_list(bool is_from_big_sync_btn)
         wxGetApp().plater()->on_filament_count_change(n);
         BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << "finish on_filament_count_change";
     }
-    sync_spoolman_filaments(sync_result, enable_append);
+    sync_spoolman_filaments(sync_result);
     for (auto& c : p->combos_filament)
         c->update();
     // Expand filament list
