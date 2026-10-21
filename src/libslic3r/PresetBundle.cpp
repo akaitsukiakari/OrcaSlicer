@@ -4631,6 +4631,15 @@ unsigned int PresetBundle::sync_ams_list(std::vector<std::pair<DynamicPrintConfi
             ams_multi_color_filment.push_back(filament_multi_color);
             continue;
         }
+        if (auto preset_override = ams_preset_overrides.find(ams_id + ":" + slot_id); preset_override != ams_preset_overrides.end()) {
+            if (const Preset *preset = filaments.find_preset(preset_override->second); preset && preset->is_compatible) {
+                ams_filament_presets.push_back(preset->name);
+                ams_filament_colors.push_back(filament_color);
+                ams_filament_color_types.push_back(filament_color_type);
+                ams_multi_color_filment.push_back(filament_multi_color);
+                continue;
+            }
+        }
         bool has_type = false;
         auto filament_type = ams.opt_string("filament_type", 0u);
         auto iter = std::find_if(filaments.begin(), filaments.end(), [this, &filament_id, &has_type, filament_type](auto &f) {

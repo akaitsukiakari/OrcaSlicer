@@ -307,6 +307,8 @@ set(SLIC3R_GUI_SOURCES
     GUI/BaseTransparentDPIFrame.hpp
     GUI/SyncAmsInfoDialog.cpp
     GUI/SyncAmsInfoDialog.hpp
+    GUI/SpoolmanLinkDialog.cpp
+    GUI/SpoolmanLinkDialog.hpp
     GUI/ImGuiWrapper.hpp
     GUI/IMSlider.cpp
     GUI/IMSlider.hpp
@@ -794,6 +796,8 @@ set(SLIC3R_GUI_SOURCES
     Utils/QidiPrinterAgent.hpp
     Utils/SnapmakerPrinterAgent.cpp
     Utils/SnapmakerPrinterAgent.hpp
+    Utils/Spoolman.cpp
+    Utils/Spoolman.hpp
     Utils/MoonrakerPrinterAgent.cpp
     Utils/MoonrakerPrinterAgent.hpp
     Utils/Moonraker.cpp

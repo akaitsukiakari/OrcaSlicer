@@ -197,6 +197,8 @@ enum class NotificationType
     // Active preset references a capability the installed+loaded plugin does not provide (outdated
     // plugin). Informational; cannot be auto-resolved; persistent, blocks slicing.
     OrcaPluginCapabilityUnavailableError,
+    // The sliced plate needs more of a filament than is left on its Spoolman spool. Shown in Preview too.
+    SpoolmanShortSpool,
     NotificationTypeCount
 
 };

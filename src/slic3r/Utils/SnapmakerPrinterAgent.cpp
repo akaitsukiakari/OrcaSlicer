@@ -1,5 +1,6 @@
 #include "SnapmakerPrinterAgent.hpp"
 #include "Http.hpp"
+#include "Spoolman.hpp"
 #include "MoonrakerPrinterAgent.hpp"
 #include "IPrinterAgent.hpp"
 #include "libslic3r/PresetBundle.hpp"
@@ -165,6 +166,11 @@ bool SnapmakerPrinterAgent::fetch_filament_info(std::string dev_id, FilamentSync
     auto filament_sub_type = ptc.value("filament_sub_type", std::vector<std::string>{});
     auto filament_color    = ptc.value("filament_color_rgba", std::vector<std::string>{});
     auto filament_vendor   = ptc.value("filament_vendor", std::vector<std::string>{});
+    // Set by the Spoolman integration of the extended firmware, 0 or null for a slot without a spool.
+    std::vector<int> filament_spool_id;
+    if (ptc.contains("filament_spool_id") && ptc["filament_spool_id"].is_array())
+        for (const auto& id : ptc["filament_spool_id"])
+            filament_spool_id.push_back(id.is_number_integer() ? id.get<int>() : 0);
 
     const int slot_count = static_cast<int>(filament_exist.size());
     if (slot_count == 0) {
@@ -181,6 +187,16 @@ bool SnapmakerPrinterAgent::fetch_filament_info(std::string dev_id, FilamentSync
 
     static const std::string empty_str;
     static const std::string default_color = "FFFFFFFF";
+
+    // The Spoolman spools in the slots, whose filaments the user can link to presets.
+    auto& slot_spools = Spoolman::slot_spools();
+    slot_spools.clear();
+    for (int i = 0; i < slot_count; ++i) {
+        SpoolmanSpool spool;
+        if (filament_exist[i] && safe_at(filament_spool_id, i, 0) > 0 &&
+            Spoolman::fetch_spool(device_info.base_url, device_info.api_key, filament_spool_id[i], spool))
+            slot_spools.emplace(i, std::move(spool));
+    }
 
     std::vector<AmsTrayData> trays;
     trays.reserve(slot_count);
