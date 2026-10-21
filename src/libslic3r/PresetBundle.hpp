@@ -507,6 +507,9 @@ public:
     std::vector<std::string>    filament_presets;
     // BBS: ams
     std::map<int, DynamicPrintConfig> filament_ams_list;
+    // Presets the user chose for the filament in a slot, by "ams_id:slot_id"; sync_ams_list() selects
+    // them instead of matching the slot's filament_id.
+    std::map<std::string, std::string> ams_preset_overrides;
     std::vector<std::vector<std::string>> ams_multi_color_filment;
 
     std::vector<std::map<int, int>> extruder_ams_counts;

@@ -233,6 +233,8 @@
 #include "SendToPrinter.hpp"
 #include "ConfigWizard.hpp"
 #include "SyncAmsInfoDialog.hpp"
+#include "SpoolmanLinkDialog.hpp"
+#include "../Utils/Spoolman.hpp"
 #include "../Utils/ASCIIFolding.hpp"
 #include "../Utils/UndoRedo.hpp"
 #include "../Utils/PresetUpdater.hpp"
@@ -6045,6 +6047,75 @@ void Sidebar::on_bed_type_change(BedType bed_type)
         p->combo_printer_bed->SetSelection(0);
 }
 
+// Remembers the Spoolman spool behind each synced filament, and updates the cost and density
+// of the user presets linked to their filaments.
+static void sync_spoolman_filaments(const SyncAmsInfoDialog::SyncResult& sync_result, bool appended)
+{
+    auto& synced = Spoolman::synced_filaments();
+    synced.clear();
+    const auto& slot_spools = Spoolman::slot_spools();
+    // Appending colors puts the slots after the existing filaments.
+    if (slot_spools.empty() || (appended && sync_result.direct_sync))
+        return;
+
+    auto slot_index = [](const std::string& ams_id, const std::string& slot_id) {
+        return std::atoi(ams_id.c_str()) * 4 + std::atoi(slot_id.c_str());
+    };
+    // Without a mapping, filament i is synced from entry i of the list.
+    std::vector<int> list_slots;
+    for (const auto& entry : wxGetApp().preset_bundle->filament_ams_list)
+        list_slots.push_back(slot_index(entry.second.opt_string("ams_id", 0u), entry.second.opt_string("slot_id", 0u)));
+
+    auto&    bundle = *wxGetApp().preset_bundle;
+    wxString updated;
+    for (int i = 0; i < int(bundle.filament_presets.size()); ++i) {
+        int slot = -1;
+        if (!sync_result.direct_sync) {
+            if (auto it = sync_result.sync_maps.find(i); it != sync_result.sync_maps.end())
+                slot = slot_index(it->second.ams_id, it->second.slot_id);
+        } else if (i < int(list_slots.size()))
+            slot = list_slots[i];
+        auto spool = slot_spools.find(slot);
+        if (spool == slot_spools.end())
+            continue;
+        const std::string& preset = bundle.filament_presets[i];
+        synced[i]                 = {spool->second, preset};
+        if (Spoolman::linked_preset(spool->second.filament_id) == preset &&
+            Spoolman::update_preset(bundle.filaments, preset, spool->second))
+            updated += "\n- " + from_u8(preset);
+    }
+    if (!updated.empty())
+        wxGetApp().plater()->get_notification_manager()->push_notification(
+            NotificationType::CustomNotification, NotificationManager::NotificationLevel::RegularNotificationLevel,
+            into_u8(_L("Cost and density updated from Spoolman:") + updated));
+}
+
+// Warns when the sliced plate needs more of a synced filament than was left on its Spoolman spool.
+static void warn_short_spoolman_spools(NotificationManager& notifications, const GCodeProcessorResult& result)
+{
+    static std::string warning;
+    if (!warning.empty())
+        notifications.close_plater_warning_notification(warning);
+    warning.clear();
+
+    const auto& filament_presets = wxGetApp().preset_bundle->filament_presets;
+    for (const auto& [index, synced] : Spoolman::synced_filaments()) {
+        const auto volume = result.print_statistics.total_volumes_per_extruder.find(size_t(index));
+        // Spoolman knows the remaining weight only of a spool with a known initial weight.
+        if (index >= int(filament_presets.size()) || filament_presets[index] != synced.preset || synced.spool.initial_weight <= 0. ||
+            volume == result.print_statistics.total_volumes_per_extruder.end() || index >= int(result.filament_densities.size()))
+            continue;
+        const double needed = volume->second * 0.001 * result.filament_densities[index];
+        if (needed > synced.spool.remaining_weight)
+            // TRN %1% is the filament number, %2% the Spoolman filament name, %3% and %4% weights in grams.
+            warning += (warning.empty() ? "" : "\n") + Slic3r::format(_u8L("Filament %1% (%2%) needs %3% g, but its spool had %4% g left when it was synced."),
+                                                              index + 1, synced.spool.label(), int(std::ceil(needed)),
+                                                              int(std::floor(synced.spool.remaining_weight)));
+    }
+    if (!warning.empty())
+        notifications.push_plater_warning_notification(warning);
+}
+
 /**
  * Build a map of filament configurations from the connected printer's AMS (Automatic Material System).
  *
@@ -6082,6 +6153,8 @@ std::map<int, DynamicPrintConfig> Sidebar::build_filament_ams_list(MachineObject
     std::map<int, DynamicPrintConfig> filament_ams_list;
     if (!obj) return filament_ams_list;
 
+    // Only a pull-mode agent's fetch finds the Spoolman spools in the slots.
+    Spoolman::slot_spools().clear();
     // For pull-mode agents (e.g., HTTP REST API), refresh DevFilaSystem first
     auto* agent = wxGetApp().getDeviceManager()->get_agent();
     if (agent && agent->get_filament_sync_mode() == FilamentSyncMode::pull) {
@@ -6325,6 +6398,7 @@ void Sidebar::sync_ams_list(bool is_from_big_sync_btn)
     if (!wxGetApp().plater()->is_same_printer_for_connected_and_selected()) {
         return;
     }
+    link_new_spoolman_filaments(this);
     std::string ams_filament_ids = wxGetApp().app_config->get("ams_filament_ids", p->ams_list_device);
     std::vector<std::string> list2;
     if (!ams_filament_ids.empty()) {
@@ -6381,7 +6455,9 @@ void Sidebar::sync_ams_list(bool is_from_big_sync_btn)
     std::vector<std::pair<DynamicPrintConfig *,std::string>> unknowns;
     auto enable_append  = wxGetApp().app_config->get_bool("enable_append_color_by_sync_ams");
     auto sync_color_only = wxGetApp().app_config->get("sync_ams_filament_mode") == "1";
+    wxGetApp().preset_bundle->ams_preset_overrides = Spoolman::slot_presets();
     auto n              = wxGetApp().preset_bundle->sync_ams_list(unknowns, !sync_result.direct_sync, sync_result.sync_maps, enable_append, merge_info, sync_color_only);
+    wxGetApp().preset_bundle->ams_preset_overrides.clear();
     wxString detail;
     for (auto & uk : unknowns) {
         auto tray_name     = uk.first->opt_string("tray_name", 0u);
@@ -6418,6 +6494,7 @@ void Sidebar::sync_ams_list(bool is_from_big_sync_btn)
         wxGetApp().plater()->on_filament_count_change(n);
         BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << "finish on_filament_count_change";
     }
+    sync_spoolman_filaments(sync_result, enable_append);
     for (auto& c : p->combos_filament)
         c->update();
     // Expand filament list
@@ -13377,6 +13454,9 @@ void Plater::priv::on_process_completed(SlicingProcessCompletedEvent &evt)
     //BBS: set the current plater's slice result to valid
     if (!this->background_process.empty())
         this->background_process.get_current_plate()->update_slice_result_valid_state(evt.success());
+    if (evt.success() && this->printer_technology == ptFFF)
+        if (const GCodeProcessorResult* result = this->background_process.get_current_gcode_result())
+            warn_short_spoolman_spools(*notification_manager, *result);
 
     //BBS: update the action button according to the current plate's status
     bool ready_to_slice = !this->partplate_list.get_curr_plate()->is_slice_result_valid();

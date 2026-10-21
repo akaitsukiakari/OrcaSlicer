@@ -72,6 +72,7 @@
 #include "slic3r/Utils/NetworkAgent.hpp"
 #include "NetworkPluginDialog.hpp"
 #include "DownloadProgressDialog.hpp"
+#include "SpoolmanLinkDialog.hpp"
 
 #ifdef __WINDOWS__
 #ifdef _MSW_DARK_MODE
@@ -2183,6 +2184,11 @@ void PreferencesDialog::create_items()
         dlg.ShowModal();
     });
     g_sizer->Add(item_network_test);
+
+    auto item_spoolman_links   = create_item_button(_L("Spoolman filaments"), _L("Edit") + dots, "", _L("Choose the filament preset that syncing selects for each Spoolman filament."), [this]() {
+        edit_spoolman_links(this);
+    });
+    g_sizer->Add(item_spoolman_links);
 
     //// ONLINE > Cloud Providers
     g_sizer->Add(create_item_title(_L("Cloud Providers")), 1, wxEXPAND);
