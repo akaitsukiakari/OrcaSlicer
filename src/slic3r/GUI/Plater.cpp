@@ -6093,11 +6093,8 @@ static void sync_spoolman_filaments(const SyncAmsInfoDialog::SyncResult& sync_re
 // Warns when the sliced plate needs more of a synced filament than was left on its Spoolman spool.
 static void warn_short_spoolman_spools(NotificationManager& notifications, const GCodeProcessorResult& result)
 {
-    static std::string warning;
-    if (!warning.empty())
-        notifications.close_plater_warning_notification(warning);
-    warning.clear();
-
+    notifications.close_notification_of_type(NotificationType::SpoolmanShortSpool);
+    std::string warning;
     const auto& filament_presets = wxGetApp().preset_bundle->filament_presets;
     for (const auto& [index, synced] : Spoolman::synced_filaments()) {
         const auto volume = result.print_statistics.total_volumes_per_extruder.find(size_t(index));
@@ -6112,8 +6109,10 @@ static void warn_short_spoolman_spools(NotificationManager& notifications, const
                                                               index + 1, synced.spool.label(), int(std::ceil(needed)),
                                                               int(std::floor(synced.spool.remaining_weight)));
     }
+    // Not a plater warning: those are hidden in Preview, where slicing ends.
     if (!warning.empty())
-        notifications.push_plater_warning_notification(warning);
+        notifications.push_notification(NotificationType::SpoolmanShortSpool, NotificationManager::NotificationLevel::WarningNotificationLevel,
+                                        warning);
 }
 
 /**
