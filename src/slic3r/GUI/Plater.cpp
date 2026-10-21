@@ -256,7 +256,7 @@
 #include "ParamsDialog.hpp"
 #include "ImageDPIFrame.hpp"
 #include "Widgets/Label.hpp"
-#include "Widgets/RadioGroup.hpp"
+#include "Widgets/RadioBox.hpp"
 #include "Widgets/CheckBox.hpp"
 #include "Widgets/Button.hpp"
 
@@ -18612,21 +18612,13 @@ ProjectDropDialog::ProjectDropDialog(const std::string &filename)
     m_sizer_main->Add(m_fname_f    , 1, wxEXPAND | wxLEFT | wxRIGHT, FromDIP(20));
     m_sizer_main->AddSpacer(FromDIP(10));
 
-    auto radio_group = new RadioGroup(this, {
-        _L("Open as project"),     // 0
-        _L("Import geometry only") // 1
-    }, wxVERTICAL);
-    radio_group->SetMinSize(wxSize(FromDIP(300),-1));
-    radio_group->SetSelection(get_action() - 1);
-
-    m_sizer_main->Add(radio_group, 0, wxEXPAND | wxLEFT | wxRIGHT, FromDIP(20));
-
-    // Option of "Open as project": take only the process settings from the file. Remembered
-    // between loads. Placed inside the radio group, right under its option.
+    // The two actions as radio buttons with the "Open as project" option's checkbox between them.
+    // Built from separate controls owned by the dialog rather than a RadioGroup: with the checkbox
+    // placed inside a RadioGroup the dialog stopped responding to clicks on Windows.
     m_keep_printer_and_filaments = wxGetApp().app_config->get_bool("import_project_keep_printer_filaments");
-    auto keep_checkbox = new ::CheckBox(radio_group);
+    auto keep_checkbox = new ::CheckBox(this);
     keep_checkbox->SetValue(m_keep_printer_and_filaments);
-    auto keep_label = new wxStaticText(radio_group, wxID_ANY, _L("Keep my printer and filaments"));
+    auto keep_label = new wxStaticText(this, wxID_ANY, _L("Keep my printer and filaments"));
     keep_label->SetFont(::Label::Body_14);
     const wxString keep_tooltip = _L("Load only the process settings from the project. Your current printer, filaments and filament colors are kept.");
     keep_checkbox->SetToolTip(keep_tooltip);
@@ -18642,30 +18634,49 @@ ProjectDropDialog::ProjectDropDialog(const std::string &filename)
         }
         e.Skip();
     });
-    auto update_keep_enabled = [this, keep_checkbox, keep_label]() {
+
+    wxBoxSizer *actions_sizer = new wxBoxSizer(wxVERTICAL);
+    actions_sizer->SetMinSize(wxSize(FromDIP(300), -1));
+    std::vector<RadioBox*>     radios;
+    std::vector<wxStaticText*> radio_labels;
+    for (const wxString &text : { _L("Open as project"), _L("Import geometry only") }) { // LoadType 1 and 2
+        radios.push_back(new RadioBox(this));
+        radio_labels.push_back(new wxStaticText(this, wxID_ANY, text));
+        radio_labels.back()->SetFont(::Label::Body_14);
+        radio_labels.back()->SetForegroundColour(StateColor::darkModeColorFor(wxColour("#363636")));
+
+        wxBoxSizer *row = new wxBoxSizer(wxHORIZONTAL);
+        row->Add(radios.back(), 0, wxALIGN_CENTER_VERTICAL);
+        row->AddSpacer(FromDIP(6));
+        row->Add(radio_labels.back(), 0, wxALIGN_CENTER_VERTICAL);
+        actions_sizer->Add(row, 0, wxTOP | wxBOTTOM, FromDIP(4));
+
+        if (radios.size() == 1) {
+            wxBoxSizer *keep_sizer = new wxBoxSizer(wxHORIZONTAL);
+            keep_sizer->Add(keep_checkbox, 0, wxALIGN_CENTER_VERTICAL);
+            keep_sizer->AddSpacer(FromDIP(6));
+            keep_sizer->Add(keep_label, 0, wxALIGN_CENTER_VERTICAL);
+            actions_sizer->Add(keep_sizer, 0, wxLEFT | wxBOTTOM, FromDIP(24));
+        }
+    }
+
+    auto select_action = [this, radios, keep_checkbox, keep_label](size_t index) {
+        set_action(int(index) + 1);
+        for (size_t i = 0; i < radios.size(); ++i)
+            radios[i]->SetValue(i == index);
         const bool enable = static_cast<LoadType>(get_action()) == LoadType::OpenProject;
         keep_checkbox->Enable(enable);
         keep_label->Enable(enable);
         keep_label->SetForegroundColour(StateColor::darkModeColorFor(enable ? wxColour("#363636") : wxColour("#909090")));
         keep_label->Refresh();
     };
-    update_keep_enabled();
-
-    wxBoxSizer *keep_sizer = new wxBoxSizer(wxHORIZONTAL);
-    keep_sizer->Add(keep_checkbox, 0, wxALIGN_CENTER_VERTICAL);
-    keep_sizer->AddSpacer(FromDIP(6));
-    keep_sizer->Add(keep_label, 0, wxALIGN_CENTER_VERTICAL);
-    // The group lays its options out in a one-column grid sized for them; let it take an extra row.
-    if (auto grid = dynamic_cast<wxFlexGridSizer*>(radio_group->GetSizer())) {
-        grid->SetRows(0);
-        grid->Insert(1, keep_sizer, 0, wxLEFT | wxBOTTOM, FromDIP(24));
-        radio_group->InvalidateBestSize();
+    for (size_t i = 0; i < radios.size(); ++i) {
+        radios[i]->Bind(wxEVT_TOGGLEBUTTON, [select_action, i](wxCommandEvent &) { select_action(i); });
+        radio_labels[i]->Bind(wxEVT_LEFT_DOWN, [select_action, i](wxMouseEvent &e) { select_action(i); e.Skip(); });
     }
+    select_action(size_t(get_action() - 1));
 
-    radio_group->Bind(wxEVT_COMMAND_RADIOBOX_SELECTED, [this, radio_group, update_keep_enabled](wxCommandEvent &e) {
-        set_action(radio_group->GetSelection() + 1);
-        update_keep_enabled();
-    });
+    m_sizer_main->Add(actions_sizer, 0, wxEXPAND | wxLEFT | wxRIGHT, FromDIP(20));
 
     m_sizer_main->AddSpacer(FromDIP(10));
 
