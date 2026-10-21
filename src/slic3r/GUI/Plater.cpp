@@ -6090,10 +6090,34 @@ static void sync_spoolman_filaments(const SyncAmsInfoDialog::SyncResult& sync_re
             into_u8(_L("Cost and density updated from Spoolman:") + updated));
 }
 
+// Without a sync since Orca started, takes a filament to hold the spool of a slot read when the
+// printer connected if its preset is linked to that spool's filament and to no other slot's.
+static void infer_spoolman_filaments()
+{
+    auto& synced = Spoolman::synced_filaments();
+    if (!synced.empty())
+        return;
+    const auto& presets = wxGetApp().preset_bundle->filament_presets;
+    for (int i = 0; i < int(presets.size()); ++i) {
+        if (std::count(presets.begin(), presets.end(), presets[i]) != 1)
+            continue;
+        const SpoolmanSpool* match   = nullptr;
+        int                  matches = 0;
+        for (const auto& [slot, spool] : Spoolman::slot_spools())
+            if (Spoolman::linked_preset(spool.filament_id) == presets[i]) {
+                match = &spool;
+                ++matches;
+            }
+        if (matches == 1)
+            synced[i] = {*match, presets[i]};
+    }
+}
+
 // Warns when the sliced plate needs more of a synced filament than was left on its Spoolman spool.
 static void warn_short_spoolman_spools(NotificationManager& notifications, const GCodeProcessorResult& result)
 {
     notifications.close_notification_of_type(NotificationType::SpoolmanShortSpool);
+    infer_spoolman_filaments();
     std::string warning;
     const auto& filament_presets = wxGetApp().preset_bundle->filament_presets;
     for (const auto& [index, synced] : Spoolman::synced_filaments()) {
