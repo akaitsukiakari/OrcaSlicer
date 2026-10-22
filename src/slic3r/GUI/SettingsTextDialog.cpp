@@ -109,7 +109,7 @@ SettingsTextDialog::SettingsTextDialog(wxWindow* parent, Mode mode)
         m_type_choice = new RadioGroup(this, {_L("Process"), _L("Filament"), _L("Printer")}, wxHORIZONTAL);
         choices->Add(m_type_choice, 0, wxALIGN_CENTER_VERTICAL);
         choices->Add(new wxStaticText(this, wxID_ANY, _L("Include") + ":"), 0, wxALIGN_CENTER_VERTICAL);
-        m_scope_choice = new RadioGroup(this, {_L("Changes from the system preset"), _L("All settings")}, wxHORIZONTAL);
+        m_scope_choice = new RadioGroup(this, {_L("Changes from the system preset"), _L("Unsaved changes"), _L("All settings")}, wxHORIZONTAL);
         choices->Add(m_scope_choice, 0, wxALIGN_CENTER_VERTICAL);
         choices->Add(new wxStaticText(this, wxID_ANY, _L("Show as") + ":"), 0, wxALIGN_CENTER_VERTICAL);
         m_view_choice = new RadioGroup(this, {_L("Text"), _L("Table")}, wxHORIZONTAL);
@@ -182,19 +182,23 @@ void SettingsTextDialog::update_export_text()
     const PresetTypeInfo& info    = preset_types[std::max(0, m_type_choice->GetSelection())];
     PresetCollection&     presets = preset_collection(info.type);
     const Preset&         edited  = presets.get_edited_preset();
-    const bool            changes_only = m_scope_choice->GetSelection() == 0;
+    const int             scope   = m_scope_choice->GetSelection(); // 0: changes from system, 1: unsaved changes, 2: all
 
     std::vector<std::string> header{std::string("OrcaSlicer ") + info.name + " settings",
                                     "Printer: " + wxGetApp().preset_bundle->printers.get_edited_preset().name,
                                     "Preset: " + edited.name + (presets.current_is_dirty() ? " (modified)" : "")};
     std::vector<std::string> keys;
-    if (changes_only) {
+    if (scope == 0) {
         // The system preset this one inherits from, or the preset itself when it is a system preset.
         const Preset* base = presets.get_selected_preset_parent();
         if (base == nullptr)
             base = &presets.get_selected_preset();
         header.push_back("Changes from: " + base->name);
         keys = edited.config.diff(base->config);
+    } else if (scope == 1) {
+        // The settings the tab marks as modified (orange, with a revert arrow): edits not yet saved to the preset.
+        header.push_back("Unsaved changes to: " + presets.get_selected_preset().name);
+        keys = presets.current_dirty_options(true);
     } else {
         keys = edited.config.keys();
     }
