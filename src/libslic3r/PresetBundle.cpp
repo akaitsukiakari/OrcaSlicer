@@ -5088,9 +5088,9 @@ void PresetBundle::update_filament_multi_color()
             exsit_multi_colors.push_back(colors);
         }
     }
-    ConfigOptionStrings *filament_multi_colour = project_config.option<ConfigOptionStrings>("filament_multi_colour");
-    filament_multi_colour->resize(exsit_multi_colors.size());
-    filament_multi_colour->values = exsit_multi_colors;
+    // Assigned without resize(), which throws when growing an empty list: the list is left empty by a
+    // sync whose first tray reports no colours (Moonraker agents report none), and the next sync can grow it.
+    project_config.option<ConfigOptionStrings>("filament_multi_colour")->values = exsit_multi_colors;
 }
 
 std::vector<int> PresetBundle::get_used_tpu_filaments(const std::vector<int> &used_filaments)
