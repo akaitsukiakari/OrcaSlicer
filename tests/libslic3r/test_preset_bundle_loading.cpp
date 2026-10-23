@@ -2568,6 +2568,8 @@ TEST_CASE("Keeping the printer and filaments applies the project's process onto 
                                              "print_settings_id", "compatible_machine_expression_group" };
 
     PresetBundle bundle;
+    // A bare bundle has no filament slots yet; fill them as the app does so the load has nothing to add.
+    bundle.update_multi_material_filament_presets();
     bundle.prints.get_edited_preset().config.opt_int("wall_loops") = 3;
     bundle.prints.get_edited_preset().config.option<ConfigOptionFloatsNullable>("outer_wall_speed")->values = { 60. };
     const std::string              print_name       = bundle.prints.get_edited_preset().name;
