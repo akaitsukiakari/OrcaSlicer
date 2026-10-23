@@ -6117,17 +6117,53 @@ void PresetBundle::convert_filament_preset_name(const std::string& machine_name,
         }
     }
 }
+
+void PresetBundle::apply_process_values_to_edited_print(const DynamicPrintConfig &config, const t_config_option_keys *file_keys)
+{
+    // Identity and variant layout belong to the user's preset, not to the values being applied.
+    static const std::set<std::string> kept_keys{"inherits", "compatible_printers", "compatible_printers_condition",
+                                                 "print_extruder_id", "print_extruder_variant"};
+    const std::set<std::string> present_keys = file_keys != nullptr ? std::set<std::string>(file_keys->begin(), file_keys->end()) :
+                                                                      std::set<std::string>();
+    DynamicPrintConfig &edited = this->prints.get_edited_preset().config;
+    t_config_option_keys plain_keys;
+    t_config_option_keys variant_keys;
+    for (const std::string &key : Preset::print_options()) {
+        // Keys the file does not carry hold defaults here, which must not replace the user's values.
+        if (kept_keys.count(key) != 0 || (file_keys != nullptr && present_keys.count(key) == 0))
+            continue;
+        const ConfigOption *src_opt = config.option(key);
+        const ConfigOption *dst_opt = edited.option(key);
+        if (src_opt == nullptr || dst_opt == nullptr || src_opt->type() != dst_opt->type())
+            continue;
+        (print_options_with_variant.count(key) != 0 ? variant_keys : plain_keys).push_back(key);
+    }
+    edited.apply_only(config, plain_keys, true);
+
+    // Per-variant values are matched by variant name, since the author's printer may have a
+    // different variant list (e.g. Standard / High Flow nozzles) than the user's.
+    const auto *src_variants = config.option<ConfigOptionStrings>("print_extruder_variant");
+    const auto *dst_variants = edited.option<ConfigOptionStrings>("print_extruder_variant");
+    if (!variant_keys.empty() && src_variants != nullptr && dst_variants != nullptr && !dst_variants->values.empty()) {
+        DynamicPrintConfig variant_config;
+        variant_config.apply_only(config, variant_keys, true);
+        variant_config.update_values_from_multi_to_multi_2(src_variants->values, dst_variants->values, edited, print_options_with_variant);
+        edited.apply(variant_config);
+    }
+    this->prints.update_dirty();
+}
+
 // Load a config file from a boost property_tree. This is a private method called from load_config_file.
 // is_external == false on if called from ConfigWizard
-void PresetBundle::load_config_file_config(const std::string &name_or_path, bool is_external, DynamicPrintConfig &&config, Semver file_version, bool selected, PublishedConfig *published_config, bool keep_printer_and_filaments)
+void PresetBundle::load_config_file_config(const std::string &name_or_path, bool is_external, DynamicPrintConfig &&config, Semver file_version, bool selected, PublishedConfig *published_config, bool keep_printer_and_filaments, const t_config_option_keys *file_keys)
 {
     PrinterTechnology printer_technology = Preset::printer_technology(config);
 
     // A "published" 3MF project keeps the user's currently-selected presets and overlays only
     // the author-selected published keys onto the edited presets.
     const bool is_published = published_config != nullptr && published_config->published;
-    // Keep the user's printer and filament presets (and filament colours); only the process
-    // preset comes from the file. Not combined with published mode, which keeps all presets.
+    // Keep the user's printer, filament and process presets (and filament colours); the file's
+    // process values are applied onto the process preset. Not combined with published mode.
     const bool keep_printer_and_filaments_only = keep_printer_and_filaments && !is_published;
 
     auto clear_compatible_printers = [](DynamicPrintConfig& config){
@@ -6276,19 +6312,22 @@ void PresetBundle::load_config_file_config(const std::string &name_or_path, bool
         // print / printer / filament presets are NOT loaded from the file. Only the
         // project config values and the published keys are applied below.
         if (!is_published) {
-            //BBS: add different settings logic
-            BOOST_LOG_TRIVIAL(debug) << __FUNCTION__ << boost::format(": load print preset from print_settings_id");
-            std::set<std::string> print_different_keys_set = project_different_keys(different_values[0]);
             if (keep_printer_and_filaments_only) {
-                // The process is applied to the user's printer, not the author's: drop the
-                // author's printer restrictions so it is not flagged incompatible.
-                compatible_printers_condition_values[0].clear();
-            } else if (!print_compatible_printers.empty()) {
-                ConfigOptionStrings* compatible_printers = config.option<ConfigOptionStrings>("compatible_printers", true);
-                compatible_printers->values = print_compatible_printers;
-            }
+                // Keep the user's process preset as well and apply the file's process values onto
+                // it as unsaved changes, so they show as modified against the user's own setup
+                // rather than against the author's (other printer's) process preset.
+                apply_process_values_to_edited_print(config, file_keys);
+            } else {
+                //BBS: add different settings logic
+                BOOST_LOG_TRIVIAL(debug) << __FUNCTION__ << boost::format(": load print preset from print_settings_id");
+                std::set<std::string> print_different_keys_set = project_different_keys(different_values[0]);
+                if (!print_compatible_printers.empty()) {
+                    ConfigOptionStrings* compatible_printers = config.option<ConfigOptionStrings>("compatible_printers", true);
+                    compatible_printers->values = print_compatible_printers;
+                }
 
-            load_preset(this->prints, 0, "print_settings_id", print_different_keys_set, std::string());
+                load_preset(this->prints, 0, "print_settings_id", print_different_keys_set, std::string());
+            }
 
             //clear compatible printers
             clear_compatible_printers(config);
