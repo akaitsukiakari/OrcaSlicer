@@ -2543,20 +2543,35 @@ TEST_CASE("Published 3MF overlays only the author-selected process keys onto the
     CHECK_THAT(control_bundle.prints.get_edited_preset().config.opt_float("layer_height"), Catch::Matchers::WithinAbs(0.28, 0.000001));
 }
 
-// Opening a project while keeping the user's printer and filaments imports only the process
-// preset; the printer and filament presets, filament colours and purge data stay the user's.
-TEST_CASE("Keeping the printer and filaments imports only the project's process", "[Preset][Bundle]")
+// Opening a project while keeping the user's printer and filaments keeps every preset of the user's
+// and applies the project's process values onto the user's process preset as unsaved changes; the
+// printer and filament presets, filament colours and purge data stay the user's.
+TEST_CASE("Keeping the printer and filaments applies the project's process onto the user's process", "[Preset][Bundle]")
 {
     DynamicPrintConfig config = DynamicPrintConfig::full_print_config();
     config.opt<ConfigOptionStrings>("filament_colour")->values = { "#FF0000" };
     config.opt_float("layer_height") = 0.28;                                      // process
+    config.opt_int("wall_loops") = 7;                                             // process key the file lacks
+    // The author's printer has Standard and High Flow variants; the user's process has Standard only.
+    config.opt<ConfigOptionStrings>("print_extruder_variant")->values = { "Direct Drive Standard", "Direct Drive High Flow" };
+    config.opt<ConfigOptionInts>("print_extruder_id")->values = { 1, 1 };
+    config.option<ConfigOptionFloatsNullable>("outer_wall_speed")->values = { 120., 300. };
     config.opt<ConfigOptionFloats>("nozzle_diameter")->values = { 0.6 };          // printer
     config.opt<ConfigOptionInts>("nozzle_temperature")->values = { 240 };         // filament
     config.opt<ConfigOptionFloats>("flush_multiplier")->values = { 2. };          // purge data
+    config.opt_string("print_settings_id", true) = "0.20mm Standard @Other";
     config.option<ConfigOptionStrings>("compatible_machine_expression_group", true)->values = { "printer_model==\"Other\"" };
     Preset::normalize(config);
+    // The keys the file carries; the rest of config holds defaults.
+    const t_config_option_keys file_keys = { "filament_colour", "layer_height", "print_extruder_variant", "print_extruder_id",
+                                             "outer_wall_speed", "nozzle_diameter", "nozzle_temperature", "flush_multiplier",
+                                             "print_settings_id", "compatible_machine_expression_group" };
 
     PresetBundle bundle;
+    bundle.prints.get_edited_preset().config.opt_int("wall_loops") = 3;
+    bundle.prints.get_edited_preset().config.option<ConfigOptionFloatsNullable>("outer_wall_speed")->values = { 60. };
+    const std::string              print_name       = bundle.prints.get_edited_preset().name;
+    const size_t                   prints_size      = bundle.prints.size();
     const std::string              printer_name     = bundle.printers.get_edited_preset().name;
     const size_t                   printers_size    = bundle.printers.size();
     const size_t                   filaments_size   = bundle.filaments.size();
@@ -2565,11 +2580,19 @@ TEST_CASE("Keeping the printer and filaments imports only the project's process"
     const std::vector<std::string> filament_colour  = bundle.project_config.opt<ConfigOptionStrings>("filament_colour")->values;
     const std::vector<double>      flush_multiplier = bundle.project_config.opt<ConfigOptionFloats>("flush_multiplier")->values;
 
-    bundle.load_config_model("test.3mf", std::move(config), Semver(), nullptr, true);
+    bundle.load_config_model("test.3mf", std::move(config), Semver(), nullptr, true, &file_keys);
 
-    CHECK_THAT(bundle.prints.get_edited_preset().config.opt_float("layer_height"), Catch::Matchers::WithinAbs(0.28, 0.000001));
-    // The author's printer restriction is dropped so the process stays compatible with the user's printer.
-    CHECK(bundle.prints.get_edited_preset().compatible_printers_condition().empty());
+    // The user's process preset stays selected and carries the file's values as unsaved changes.
+    const Preset &print = bundle.prints.get_edited_preset();
+    CHECK(print.name == print_name);
+    CHECK(bundle.prints.size() == prints_size);
+    CHECK(print.is_dirty);
+    CHECK_THAT(print.config.opt_float("layer_height"), Catch::Matchers::WithinAbs(0.28, 0.000001));
+    // A key the file does not carry keeps the user's value rather than the default.
+    CHECK(print.config.opt_int("wall_loops") == 3);
+    // Per-variant values are matched by variant name and keep the user's variant layout.
+    check_double_vector(print.config.option<ConfigOptionFloatsNullable>("outer_wall_speed")->values, { 120. });
+    CHECK(print.config.opt<ConfigOptionStrings>("print_extruder_variant")->values == std::vector<std::string>{ "Direct Drive Standard" });
 
     CHECK(bundle.printers.get_edited_preset().name == printer_name);
     CHECK(bundle.printers.size() == printers_size);

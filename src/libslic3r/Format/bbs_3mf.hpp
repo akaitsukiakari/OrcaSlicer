@@ -224,8 +224,8 @@ enum class LoadStrategy
     LoadAuxiliary = 16,
     Silence = 32,
     ImperialUnits = 64,
-    // Open a project but keep the user's current printer and filament presets; only the process
-    // preset is taken from the file. Read by the GUI loader, ignored by the 3MF reader.
+    // Open a project but keep the user's current presets; only the file's process values are applied
+    // onto the process preset. Read by the GUI loader, ignored by the 3MF reader.
     KeepPrinterAndFilaments = 128,
 
     Restore = 0x10000 | LoadModel | LoadConfig | LoadAuxiliary | Silence,

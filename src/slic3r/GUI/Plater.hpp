@@ -373,8 +373,8 @@ public:
 
     int new_project(bool skip_confirm = false, bool silent = false, const wxString& project_name = wxString(), bool reload_presets = true);
     // BBS: save & backup
-    // keep_printer_and_filaments: take only the process preset from the project and keep the
-    // current printer, filaments and filament colours.
+    // keep_printer_and_filaments: keep the current printer, filaments, filament colours and process,
+    // and apply the project's process values onto the process as unsaved changes.
     void load_project(wxString const & filename = "", wxString const & originfile = "-", bool keep_printer_and_filaments = false);
     int save_project(bool saveAs = false);
     //BBS download project by project id

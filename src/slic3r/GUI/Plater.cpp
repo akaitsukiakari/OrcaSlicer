@@ -9176,6 +9176,8 @@ std::vector<size_t> Plater::priv::load_files(const std::vector<fs::path>& input_
                 // here (outside the config block below) so it stays alive for the embedded-preset
                 // gate, the metadata strip and the preset overlay after the block closes.
                 PublishedConfig published_config;
+                // Keys the file carries, for applying its process values when keeping the user's presets.
+                t_config_option_keys file_config_keys;
                 {
                     DynamicPrintConfig config_loaded;
 
@@ -9539,17 +9541,13 @@ std::vector<size_t> Plater::priv::load_files(const std::vector<fs::path>& input_
                     // BBS:: project embedded presets (skipped for published projects: the author's
                     // embedded presets must not pollute the receiver's library, the overlay applies
                     // the published keys to the receiver's own presets instead).
-                    if ((project_presets.size() > 0) && load_config && !published_config.published) {
-                        // load project embedded presets (only the process ones when keeping the
-                        // user's printer and filaments)
-                        std::vector<Preset*> presets_to_load = project_presets;
-                        if (keep_printer_and_filaments)
-                            presets_to_load.erase(std::remove_if(presets_to_load.begin(), presets_to_load.end(),
-                                                                 [](const Preset* preset) { return preset->type != Preset::TYPE_PRINT; }),
-                                                  presets_to_load.end());
+                    // Also skipped when keeping the user's presets: the project's process values are
+                    // applied onto the user's own process preset, so none of its presets is used.
+                    if ((project_presets.size() > 0) && load_config && !published_config.published && !keep_printer_and_filaments) {
+                        // load project embedded presets
                         PresetsConfigSubstitutions preset_substitutions;
                         PresetBundle &             preset_bundle = *wxGetApp().preset_bundle;
-                        preset_substitutions                     = preset_bundle.load_project_embedded_presets(presets_to_load, ForwardCompatibilitySubstitutionRule::Enable);
+                        preset_substitutions                     = preset_bundle.load_project_embedded_presets(project_presets, ForwardCompatibilitySubstitutionRule::Enable);
                         if (is_bambu_studio_project)
                             log_substitutions(preset_substitutions, path.string());
                         else if (!preset_substitutions.empty())
@@ -9573,6 +9571,9 @@ std::vector<size_t> Plater::priv::load_files(const std::vector<fs::path>& input_
                         PrinterTechnology printer_technology = Preset::printer_technology(config_loaded);
 
                         config.apply(static_cast<const ConfigBase &>(FullPrintConfig::defaults()));
+                        // Keys the file itself carries, before the defaults fill in the rest.
+                        if (keep_printer_and_filaments)
+                            file_config_keys = config_loaded.keys();
                         // and place the loaded config over the base.
                         config += std::move(config_loaded);
                         std::map<std::string, std::string> validity = config.validate();
@@ -9730,7 +9731,8 @@ std::vector<size_t> Plater::priv::load_files(const std::vector<fs::path>& input_
                                     for (std::string& id : ids->values)
                                         id = agent->to_orca_filament_id(id);
                             }
-                            preset_bundle->load_config_model(filename.string(), std::move(config), file_version, &published_config, keep_printer_and_filaments);
+                            preset_bundle->load_config_model(filename.string(), std::move(config), file_version, &published_config, keep_printer_and_filaments,
+                                                             &file_config_keys);
                             if (config_loaded_out != nullptr)
                                 *config_loaded_out = true;
 
@@ -18736,7 +18738,7 @@ ProjectDropDialog::ProjectDropDialog(const std::string &filename)
     keep_checkbox->SetValue(m_keep_printer_and_filaments);
     auto keep_label = new wxStaticText(this, wxID_ANY, _L("Keep my printer and filaments"));
     keep_label->SetFont(::Label::Body_14);
-    const wxString keep_tooltip = _L("Load only the process settings from the project. Your current printer, filaments and filament colors are kept.");
+    const wxString keep_tooltip = _L("Apply the project's process settings to your current process as unsaved changes. Your current printer, filaments and filament colors are kept.");
     keep_checkbox->SetToolTip(keep_tooltip);
     keep_label->SetToolTip(keep_tooltip);
     keep_checkbox->Bind(wxEVT_TOGGLEBUTTON, [this, keep_checkbox](wxCommandEvent &e) {
