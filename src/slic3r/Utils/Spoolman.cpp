@@ -7,14 +7,17 @@
 #include "slic3r/GUI/GUI_App.hpp"
 
 #include "nlohmann/json.hpp"
+#include <boost/algorithm/string.hpp>
 #include <boost/log/trivial.hpp>
 
 #include <algorithm>
+#include <cctype>
 #include <cmath>
 #include <cstdlib>
 #include <map>
 #include <string>
 #include <utility>
+#include <vector>
 
 namespace Slic3r {
 
@@ -35,6 +38,93 @@ std::string json_string(const nlohmann::json& j, const char* key)
     return it != j.end() && it->is_string() ? it->get<std::string>() : std::string();
 }
 
+// "#RRGGBB" of a Spoolman "RRGGBB" or "RRGGBBAA" color, empty when it isn't one.
+std::string hex_color(const std::string& hex)
+{
+    if (hex.size() < 6 || !std::all_of(hex.begin(), hex.begin() + 6, [](unsigned char c) { return std::isxdigit(c); }))
+        return {};
+    return "#" + boost::algorithm::to_upper_copy(hex.substr(0, 6));
+}
+
+// The Moonraker printer whose Spoolman proxy last read a spool.
+struct Proxy
+{
+    std::string base_url;
+    std::string api_key;
+};
+Proxy& last_proxy()
+{
+    static Proxy proxy;
+    return proxy;
+}
+
+// Spoolman API GET of path ("/v1/spool"), from Spoolman itself or through the Moonraker proxy
+// of a printer. Returns a discarded value and sets error when nothing was read.
+nlohmann::json get_json(const std::string& base_url, const std::string& api_key, const std::string& path, bool proxy, std::string& error)
+{
+    std::string body;
+    auto        http = proxy ? Http::post(base_url + "/server/spoolman/proxy") : Http::get(base_url + "/api" + path);
+    if (proxy) {
+        if (!api_key.empty())
+            http.header("X-Api-Key", api_key);
+        http.header("Content-Type", "application/json")
+            .set_post_body(nlohmann::json{{"request_method", "GET"}, {"path", path}}.dump());
+    }
+    http.timeout_connect(3)
+        .timeout_max(5)
+        .on_complete([&](std::string response, unsigned) { body = std::move(response); })
+        .on_error([&](std::string, std::string err, unsigned status) { error = err + " (HTTP " + std::to_string(status) + ")"; })
+        .perform_sync();
+    if (body.empty()) {
+        if (error.empty())
+            error = "empty response";
+        return nlohmann::json(nlohmann::json::value_t::discarded);
+    }
+
+    auto json = nlohmann::json::parse(body, nullptr, false);
+    // Moonraker wraps the Spoolman response in "result".
+    if (proxy && json.is_object() && json.contains("result"))
+        json = json["result"];
+    return json;
+}
+
+bool parse_spool(const nlohmann::json& json, SpoolmanSpool& spool)
+{
+    if (!json.is_object() || !json.contains("filament") || !json["filament"].is_object())
+        return false;
+
+    const nlohmann::json& filament = json["filament"];
+    spool                  = SpoolmanSpool();
+    spool.id               = int(json_number(json, "id"));
+    spool.filament_id      = int(json_number(filament, "id"));
+    spool.name             = json_string(filament, "name");
+    spool.material         = json_string(filament, "material");
+    spool.density          = json_number(filament, "density");
+    spool.diameter         = json_number(filament, "diameter");
+    spool.price            = json_number(json, "price");
+    spool.initial_weight   = json_number(json, "initial_weight");
+    spool.remaining_weight = json_number(json, "remaining_weight");
+    spool.location         = json_string(json, "location");
+    if (spool.price == 0.)
+        spool.price = json_number(filament, "price");
+    if (spool.initial_weight == 0.)
+        spool.initial_weight = json_number(filament, "weight");
+    if (filament.contains("vendor") && filament["vendor"].is_object())
+        spool.vendor = json_string(filament["vendor"], "name");
+
+    const std::string        multi_color = json_string(filament, "multi_color_hexes");
+    std::vector<std::string> hexes;
+    boost::algorithm::split(hexes, multi_color, boost::algorithm::is_any_of(","));
+    for (const std::string& hex : hexes)
+        if (std::string color = hex_color(boost::algorithm::trim_copy(hex)); !color.empty())
+            spool.colors.push_back(std::move(color));
+    if (spool.colors.empty())
+        if (std::string color = hex_color(json_string(filament, "color_hex")); !color.empty())
+            spool.colors.push_back(std::move(color));
+    spool.gradient = spool.colors.size() > 1 && json_string(filament, "multi_color_direction") == "longitudinal";
+    return spool.id > 0 && spool.filament_id > 0;
+}
+
 } // anonymous namespace
 
 std::string SpoolmanSpool::label() const
@@ -51,53 +141,54 @@ double SpoolmanSpool::cost_per_kg() const { return initial_weight > 0. ? price *
 namespace Spoolman {
 
 const std::string NOT_LINKED = "-";
+const char* const URL_KEY    = "spoolman_url";
+const char* const PICKER_KEY = "spoolman_color_picker";
 
 bool fetch_spool(const std::string& base_url, const std::string& api_key, int spool_id, SpoolmanSpool& spool)
 {
-    std::string body;
-    std::string error;
-    auto        http = Http::post(base_url + "/server/spoolman/proxy");
-    if (!api_key.empty())
-        http.header("X-Api-Key", api_key);
-    http.header("Content-Type", "application/json")
-        .set_post_body(nlohmann::json{{"request_method", "GET"}, {"path", "/v1/spool/" + std::to_string(spool_id)}}.dump())
-        .timeout_connect(3)
-        .timeout_max(5)
-        .on_complete([&](std::string response, unsigned) { body = std::move(response); })
-        .on_error([&](std::string, std::string err, unsigned status) { error = err + " (HTTP " + std::to_string(status) + ")"; })
-        .perform_sync();
-    if (body.empty()) {
+    last_proxy() = {base_url, api_key};
+    std::string    error;
+    nlohmann::json json = get_json(base_url, api_key, "/v1/spool/" + std::to_string(spool_id), true, error);
+    if (json.is_discarded() && !error.empty()) {
         BOOST_LOG_TRIVIAL(warning) << "Spoolman: spool " << spool_id << " not read: " << error;
         return false;
     }
-
-    auto json = nlohmann::json::parse(body, nullptr, false);
-    // Moonraker wraps the Spoolman response in "result".
-    if (json.is_object() && json.contains("result"))
-        json = json["result"];
-    if (!json.is_object() || !json.contains("filament") || !json["filament"].is_object()) {
+    if (!parse_spool(json, spool)) {
         BOOST_LOG_TRIVIAL(warning) << "Spoolman: unexpected response for spool " << spool_id;
         return false;
     }
+    return true;
+}
 
-    const nlohmann::json& filament = json["filament"];
-    spool                  = SpoolmanSpool();
-    spool.id               = spool_id;
-    spool.filament_id      = int(json_number(filament, "id"));
-    spool.name             = json_string(filament, "name");
-    spool.material         = json_string(filament, "material");
-    spool.density          = json_number(filament, "density");
-    spool.diameter         = json_number(filament, "diameter");
-    spool.price            = json_number(json, "price");
-    spool.initial_weight   = json_number(json, "initial_weight");
-    spool.remaining_weight = json_number(json, "remaining_weight");
-    if (spool.price == 0.)
-        spool.price = json_number(filament, "price");
-    if (spool.initial_weight == 0.)
-        spool.initial_weight = json_number(filament, "weight");
-    if (filament.contains("vendor") && filament["vendor"].is_object())
-        spool.vendor = json_string(filament["vendor"], "name");
-    return spool.filament_id > 0;
+bool fetch_spools(std::vector<SpoolmanSpool>& spools, std::string& error)
+{
+    spools.clear();
+    error.clear();
+    std::string url = GUI::wxGetApp().app_config->get(URL_KEY);
+    boost::algorithm::trim(url);
+    while (!url.empty() && url.back() == '/')
+        url.pop_back();
+    if (!url.empty() && url.find("://") == std::string::npos)
+        url = "http://" + url;
+    const bool proxy = url.empty();
+    if (proxy && last_proxy().base_url.empty())
+        return false;
+
+    nlohmann::json json = proxy ? get_json(last_proxy().base_url, last_proxy().api_key, "/v1/spool", true, error) :
+                                  get_json(url, "", "/v1/spool", false, error);
+    if (!json.is_array()) {
+        if (error.empty())
+            error = "unexpected response";
+        BOOST_LOG_TRIVIAL(warning) << "Spoolman: spools not read: " << error;
+        return false;
+    }
+    for (const nlohmann::json& item : json) {
+        SpoolmanSpool spool;
+        if (parse_spool(item, spool))
+            spools.push_back(std::move(spool));
+    }
+    std::stable_sort(spools.begin(), spools.end(), [](const SpoolmanSpool& l, const SpoolmanSpool& r) { return l.label() < r.label(); });
+    return true;
 }
 
 std::map<int, SpoolmanSpool>& slot_spools()

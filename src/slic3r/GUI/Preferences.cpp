@@ -73,6 +73,7 @@
 #include "NetworkPluginDialog.hpp"
 #include "DownloadProgressDialog.hpp"
 #include "SpoolmanLinkDialog.hpp"
+#include "slic3r/Utils/Spoolman.hpp"
 
 #ifdef __WINDOWS__
 #ifdef _MSW_DARK_MODE
@@ -2214,6 +2215,9 @@ void PreferencesDialog::create_items()
         edit_spoolman_links(this);
     });
     g_sizer->Add(item_spoolman_links);
+
+    auto item_spoolman_picker  = create_item_checkbox(_L("Choose filament colors from Spoolman"), _L("Clicking the color of a filament in the sidebar lists the Spoolman spools. Choosing one selects the preset linked to its filament and takes its color, cost and density."), Spoolman::PICKER_KEY);
+    g_sizer->Add(item_spoolman_picker);
 
     //// ONLINE > Cloud Providers
     g_sizer->Add(create_item_title(_L("Cloud Providers")), 1, wxEXPAND);

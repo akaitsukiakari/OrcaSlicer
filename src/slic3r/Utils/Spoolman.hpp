@@ -2,6 +2,7 @@
 
 #include <map>
 #include <string>
+#include <vector>
 
 namespace Slic3r {
 
@@ -20,6 +21,11 @@ struct SpoolmanSpool
     double      remaining_weight = 0.; // grams
     double      density          = 0.;
     double      diameter         = 0.;
+    std::string location;
+    // "#RRGGBB" colors of the filament, more than one for a multicolor filament.
+    std::vector<std::string> colors;
+    // The colors change along the filament rather than lying side by side.
+    bool gradient = false;
 
     // "GEEETECH PLA Black"
     std::string label() const;
@@ -29,13 +35,23 @@ struct SpoolmanSpool
 
 // Spoolman data of the spools in the slots of a Moonraker printer. Moonraker proxies the
 // Spoolman API, so the printer's own connection is used and Orca needs no Spoolman address.
+// Listing every spool uses the Spoolman address in the app config when set, otherwise that proxy.
 namespace Spoolman {
+
+// App config key of the Spoolman address, "http://host:7912".
+extern const char* const URL_KEY;
+// App config key of the option to choose a filament's color by choosing a Spoolman spool.
+extern const char* const PICKER_KEY;
 
 // Linked preset value of a Spoolman filament the user chose not to link to a preset.
 extern const std::string NOT_LINKED;
 
 // Reads a spool through the Moonraker Spoolman proxy. Runs synchronously.
 bool fetch_spool(const std::string& base_url, const std::string& api_key, int spool_id, SpoolmanSpool& spool);
+
+// Reads the spools that aren't archived. Runs synchronously. Fails with an error message when
+// there is no Spoolman address and no printer has been read through its proxy since Orca started.
+bool fetch_spools(std::vector<SpoolmanSpool>& spools, std::string& error);
 
 // Spools found in the printer slots by the last filament sync, by slot index (ams_id * 4 + slot_id).
 std::map<int, SpoolmanSpool>& slot_spools();
