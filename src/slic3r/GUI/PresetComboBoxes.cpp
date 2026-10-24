@@ -64,12 +64,14 @@
 #include "Tab.hpp"
 #include "ConfigWizard.hpp"
 #include "../Utils/UndoRedo.hpp"
+#include "../Utils/Spoolman.hpp"
 #include "BitmapCache.hpp"
 #include "SavePresetDialog.hpp"
 #include "MsgDialog.hpp"
 #include "ParamsDialog.hpp"
 #include "FilamentPickerDialog.hpp"
 #include "ColorPickerDialog.hpp"
+#include "SpoolmanSpoolDialog.hpp"
 #include "wxExtensions.hpp"
 
 #include "DeviceCore/DevManager.h"
@@ -917,7 +919,10 @@ PlaterPresetComboBox::PlaterPresetComboBox(wxWindow *parent, Preset::Type preset
             // Check if it's an official filament
             auto fila_type = Preset::remove_suffix_modified(GetValue().ToUTF8().data());
             bool is_official = boost::algorithm::starts_with(fila_type, "Bambu");
-            if (is_official) {
+            // Orca: the color comes with a spool chosen from Spoolman, when the user turned that on.
+            if (wxGetApp().app_config->get_bool(Spoolman::PICKER_KEY)) {
+                pick_spoolman_spool(*this);
+            } else if (is_official) {
                 // Get filament_id from filament_presets. FilamentPickerDialog looks up
                 // filaments_color_codes.json, which is downloaded from Bambu and keyed by the
                 // printer's own ids, so translate our OF id (the "GFA00" fallback is already one).
@@ -1654,6 +1659,22 @@ void PlaterPresetComboBox::sync_colour_config(const std::vector<std::string> &cl
     update();  // refresh the preset combobox with new config
 
     wxGetApp().plater()->on_config_change(cfg_new);
+}
+
+bool PlaterPresetComboBox::select_preset(const std::string &name)
+{
+    for (unsigned int i = 0; i < GetCount(); ++i) {
+        const auto marker = reinterpret_cast<Marker>(GetClientData(i));
+        if ((marker >= LABEL_ITEM_DISABLED && marker < LABEL_ITEM_MAX) || Preset::remove_suffix_modified(into_u8(GetItemAlias(i))) != name)
+            continue;
+        SetSelection(i);
+        wxCommandEvent evt(wxEVT_COMBOBOX, GetId());
+        evt.SetEventObject(this);
+        evt.SetInt(i);
+        GetEventHandler()->ProcessEvent(evt);
+        return true;
+    }
+    return false;
 }
 
 // ---------------------------------

@@ -309,6 +309,8 @@ set(SLIC3R_GUI_SOURCES
     GUI/SyncAmsInfoDialog.hpp
     GUI/SpoolmanLinkDialog.cpp
     GUI/SpoolmanLinkDialog.hpp
+    GUI/SpoolmanSpoolDialog.cpp
+    GUI/SpoolmanSpoolDialog.hpp
     GUI/ImGuiWrapper.hpp
     GUI/IMSlider.cpp
     GUI/IMSlider.hpp

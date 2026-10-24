@@ -218,6 +218,8 @@ public:
     FilamentColor get_cur_color_info();
     void show_default_color_picker();
     void sync_colour_config(const std::vector<std::string> &clrs, bool is_gradient);
+    // Selects the preset as if the user chose it in the list. False when the list doesn't offer it.
+    bool select_preset(const std::string &name);
     void sys_color_changed() override;
 
 private:
