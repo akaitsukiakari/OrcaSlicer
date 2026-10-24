@@ -38,11 +38,13 @@ add_executable(${_TEST_NAME}_tests
     test_preset_options.cpp
     test_edge_grid.cpp
     test_elephant_foot_compensation.cpp
+    test_exclusion_volumes.cpp
     test_fill_corner_smoothing.cpp
     test_filament_mixer.cpp
     test_fill_plane_path.cpp
     test_adaptive_infill_field.cpp
     test_geometry.cpp
+    test_kdtree.cpp
     test_imex_arrange.cpp
     test_imex_helpers.cpp
     test_imex_zones.cpp
@@ -67,6 +69,7 @@ add_executable(${_TEST_NAME}_tests
     test_utils.cpp
     test_miniz_extension.cpp
     test_timeutils.cpp
+    test_semver.cpp
     test_voronoi.cpp
     test_wipe_tower_estimate.cpp
     test_wipe_tower.cpp
