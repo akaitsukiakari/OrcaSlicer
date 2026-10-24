@@ -9540,6 +9540,9 @@ wxString GUI_App::filter_string(wxString str)
 
 bool GUI_App::OnExceptionInMainLoop()
 {
+    // The exception ends the app, and wx then deletes MainFrame without closing it, which sets this
+    // otherwise. The windows deleted then check it, e.g. Selection::clear() in ~GLCanvas3D().
+    set_closing(true);
     generic_exception_handle();
     return false;
 }
