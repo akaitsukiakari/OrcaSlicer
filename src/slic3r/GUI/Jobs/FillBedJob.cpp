@@ -183,6 +183,11 @@ void FillBedJob::prepare()
         const FillTemplate &t = templates[i % templates.size()];
         ArrangePolygon ap = t.ap;
         ap.poly = t.poly;
+        // Copies have priority <= 0, existing instances 1. Each round of copies
+        // gets a lower priority than the one before, so the arranger places
+        // them round by round instead of grouping them by filament, which
+        // would fill the plate with the first filament's objects only.
+        ap.priority = -int(i / templates.size());
         ap.bed_idx = PartPlateList::MAX_PLATES_COUNT;
         ap.itemid = -1;
         ap.setter = [this, obj_idx = t.obj_idx, inst_idx = t.inst_idx](const ArrangePolygon &p) {
@@ -250,7 +255,7 @@ void FillBedJob::process(Ctl &ctl)
     };
 
     params.on_packed = [&do_stop] (const ArrangePolygon &ap) {
-        do_stop = ap.bed_idx > 0 && ap.priority == 0;
+        do_stop = ap.bed_idx > 0 && ap.priority <= 0;
     };
     // final align用的是凸包，在有fixed item的情况下可能找到的参考点位置是错的，这里就不做了。见STUDIO-3265
     params.do_final_align = !is_bbl;
@@ -282,7 +287,7 @@ void FillBedJob::process(Ctl &ctl)
         // newly placed copies at their old positions.
         const Vec3d plate_origin = partplate_list.get_curr_plate()->get_origin();
         for (const ArrangePolygon &existing : m_selected) {
-            if (existing.priority == 0 || existing.bed_idx != 0)
+            if (existing.priority <= 0 || existing.bed_idx != 0)
                 continue;
 
             BoundingBox bbox = get_extents(existing.transformed_poly());
@@ -302,7 +307,7 @@ void FillBedJob::process(Ctl &ctl)
 
         size_t cell_index = 0;
         for (ArrangePolygon &item : m_selected) {
-            if (item.priority != 0)
+            if (item.priority > 0)
                 continue;
 
             if (cell_index < empty_cells.size()) {
@@ -343,7 +348,7 @@ void FillBedJob::finalize(bool canceled, std::exception_ptr &eptr)
         inst_cnts.push_back(m_plater->model().objects[obj_idx]->instances.size());
 
     int added_cnt = std::accumulate(m_selected.begin(), m_selected.end(), 0, [](int s, auto &ap) {
-        return s + int(ap.priority == 0 && ap.bed_idx == 0);
+        return s + int(ap.priority <= 0 && ap.bed_idx == 0);
     });
 
     int oldSize = m_plater->model().objects.size();
