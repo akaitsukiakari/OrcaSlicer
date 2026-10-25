@@ -6,6 +6,8 @@
 #include "libslic3r/Arrange.hpp"
 #include "libslic3r/Point.hpp"
 #include <exception>
+#include <optional>
+#include <utility>
 #include <vector>
 
 namespace Slic3r { namespace GUI {
@@ -33,6 +35,9 @@ class FillBedJob : public Job
     Plater *m_plater;
 
     bool m_instances;
+
+    // The plate and new position of a prime tower prepare() moved to a corner.
+    std::optional<std::pair<int, Vec2d>> m_moved_wipe_tower;
 
 public:
 

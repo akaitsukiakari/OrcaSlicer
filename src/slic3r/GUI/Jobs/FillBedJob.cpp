@@ -43,6 +43,7 @@ void FillBedJob::prepare()
     PartPlateList& plate_list = m_plater->get_partplate_list();
 
     m_object_idxs.clear();
+    m_moved_wipe_tower.reset();
     m_locked.clear();
     m_selected.clear();
     m_unselected.clear();
@@ -147,8 +148,22 @@ void FillBedJob::prepare()
 
     m_bedpts = get_bed_shape(*m_plater->config());
 
-    if (auto wt = get_wipe_tower_arrangepoly(*m_plater))
+    if (auto wt = get_wipe_tower_arrangepoly(*m_plater)) {
+        if (m_plater->canvas3D()->get_arrange_settings().move_wipe_tower_to_corner) {
+            // The grid fill leaves the existing instances where they are, so the tower keeps
+            // clear of them too.
+            ArrangePolygons fixed = m_unselected;
+            for (ArrangePolygon ap : m_selected) {
+                ap.bed_idx = wt->bed_idx;
+                ap.translation(X) -= bed_stride_x(m_plater) * (cur_plate_index % plate_cols);
+                ap.translation(Y) += bed_stride_y(m_plater) * (cur_plate_index / plate_cols);
+                fixed.emplace_back(std::move(ap));
+            }
+            if (move_wipe_tower_to_corner(*wt, fixed, m_bedpts))
+                m_moved_wipe_tower = std::make_pair(cur_plate_index, unscaled(wt->translation));
+        }
         m_unselected.emplace_back(std::move(*wt));
+    }
 
     double sc = scaled<double>(1.) * scaled(1.);
 
@@ -183,6 +198,11 @@ void FillBedJob::prepare()
         const FillTemplate &t = templates[i % templates.size()];
         ArrangePolygon ap = t.ap;
         ap.poly = t.poly;
+        // Copies have priority <= 0, existing instances 1. Each round of copies
+        // gets a lower priority than the one before, so the arranger places
+        // them round by round instead of grouping them by filament, which
+        // would fill the plate with the first filament's objects only.
+        ap.priority = -int(i / templates.size());
         ap.bed_idx = PartPlateList::MAX_PLATES_COUNT;
         ap.itemid = -1;
         ap.setter = [this, obj_idx = t.obj_idx, inst_idx = t.inst_idx](const ArrangePolygon &p) {
@@ -250,7 +270,7 @@ void FillBedJob::process(Ctl &ctl)
     };
 
     params.on_packed = [&do_stop] (const ArrangePolygon &ap) {
-        do_stop = ap.bed_idx > 0 && ap.priority == 0;
+        do_stop = ap.bed_idx > 0 && ap.priority <= 0;
     };
     // final align用的是凸包，在有fixed item的情况下可能找到的参考点位置是错的，这里就不做了。见STUDIO-3265
     params.do_final_align = !is_bbl;
@@ -282,7 +302,7 @@ void FillBedJob::process(Ctl &ctl)
         // newly placed copies at their old positions.
         const Vec3d plate_origin = partplate_list.get_curr_plate()->get_origin();
         for (const ArrangePolygon &existing : m_selected) {
-            if (existing.priority == 0 || existing.bed_idx != 0)
+            if (existing.priority <= 0 || existing.bed_idx != 0)
                 continue;
 
             BoundingBox bbox = get_extents(existing.transformed_poly());
@@ -302,7 +322,7 @@ void FillBedJob::process(Ctl &ctl)
 
         size_t cell_index = 0;
         for (ArrangePolygon &item : m_selected) {
-            if (item.priority != 0)
+            if (item.priority > 0)
                 continue;
 
             if (cell_index < empty_cells.size()) {
@@ -343,10 +363,16 @@ void FillBedJob::finalize(bool canceled, std::exception_ptr &eptr)
         inst_cnts.push_back(m_plater->model().objects[obj_idx]->instances.size());
 
     int added_cnt = std::accumulate(m_selected.begin(), m_selected.end(), 0, [](int s, auto &ap) {
-        return s + int(ap.priority == 0 && ap.bed_idx == 0);
+        return s + int(ap.priority <= 0 && ap.bed_idx == 0);
     });
 
     int oldSize = m_plater->model().objects.size();
+
+    if (m_moved_wipe_tower) {
+        set_wipe_tower_position(m_moved_wipe_tower->first, m_moved_wipe_tower->second);
+        if (added_cnt == 0)
+            m_plater->update();
+    }
 
     if (added_cnt > 0) {
         //BBS: adjust the selected instances

@@ -47,6 +47,10 @@
 #include "libslic3r/Config.hpp"
 #include <cmath>
 #include <string>
+#include <array>
+#include <tuple>
+#include "libslic3r/ClipperUtils.hpp"
+#include "libslic3r/GCode/WipeTowerEstimate.hpp"
 
 #define SAVE_ARRANGE_POLY 0
 
@@ -242,6 +246,8 @@ void ArrangeJob::clear_input()
     m_locked.clear();
     m_unarranged.clear();
     m_uncompatible_plates.clear();
+    m_wipe_towers.clear();
+    m_moved_wipe_towers.clear();
     m_selected_object.clear();
     m_selected_print_time.clear();
     m_left_in_place.clear();
@@ -605,6 +611,7 @@ void ArrangeJob::prepare_wipe_tower()
             // wipe tower is already there
             wipe_tower_ap = get_wipetower_arrange_poly(&wti);
             wipe_tower_ap.bed_idx = bedid_unlocked;
+            m_wipe_towers.emplace_back(bedid, m_unselected.size());
             m_unselected.emplace_back(wipe_tower_ap);
         }
         else if (need_wipe_tower) {
@@ -680,6 +687,7 @@ void ArrangeJob::prepare_partplate() {
     // BBS
     if (auto wti = get_wipe_tower(*m_plater, current_plate_index)) {
         ArrangePolygon&& ap = get_wipetower_arrange_poly(&wti);
+        m_wipe_towers.emplace_back(current_plate_index, m_unselected.size());
         m_unselected.emplace_back(std::move(ap));
     }
 
@@ -755,6 +763,9 @@ void ArrangeJob::prepare()
 
     // After prepare_all(), which locks the plates it must leave alone.
     prepare_imex_zones();
+
+    if (settings.move_wipe_tower_to_corner)
+        move_wipe_towers_to_corners();
 
 
 #if SAVE_ARRANGE_POLY
@@ -1184,6 +1195,10 @@ void ArrangeJob::finalize(bool canceled, std::exception_ptr &eptr) {
     }
     m_plater->get_notification_manager()->close_notification_of_type(NotificationType::ArrangeOngoing);
 
+    // Before the plates are rebuilt, which can remove a plate and its tower position.
+    for (const auto &[plate_idx, pos] : m_moved_wipe_towers)
+        set_wipe_tower_position(plate_idx, pos);
+
     //BBS: reload all objects due to arrange. Plates are never recycled here: arranging
     // must not remove a plate the user created, even when the arrange left it empty.
     if (only_on_partplate) {
@@ -1207,6 +1222,59 @@ void ArrangeJob::finalize(bool canceled, std::exception_ptr &eptr) {
     m_plater->update();
 
     m_plater->m_arrange_running.store(false);
+}
+
+void ArrangeJob::move_wipe_towers_to_corners()
+{
+    const Points bed = get_bed_shape(*m_plater->config());
+    for (const auto &[plate_idx, item_idx] : m_wipe_towers) {
+        ArrangePolygon &tower = m_unselected[item_idx];
+        if (move_wipe_tower_to_corner(tower, m_unselected, bed))
+            m_moved_wipe_towers.emplace_back(plate_idx, unscaled(tower.translation));
+    }
+}
+
+bool move_wipe_tower_to_corner(ArrangePolygon &tower, const ArrangePolygons &fixed, const Points &bed)
+{
+    Polygons obstacles;
+    for (const ArrangePolygon &item : fixed)
+        if (&item != &tower && !item.is_wipe_tower && item.bed_idx == tower.bed_idx)
+            append(obstacles, offset(item.transformed_poly().contour, float(scaled(WIPE_TOWER_MARGIN) + std::max<coord_t>(0, item.inflation))));
+
+    const BoundingBox tower_bb = get_extents(tower.transformed_poly());
+    const BoundingBox bed_bb   = get_extents(bed);
+    const Point       size     = tower_bb.size();
+    // The tower's position ranges, keeping the comfort margin from the plate edges where the
+    // plate leaves room for it.
+    auto anchors = [&bed_bb, &size](double margin) {
+        const Point m(scaled(margin), scaled(margin));
+        return std::make_pair(Point(bed_bb.min + m), Point(bed_bb.max - size - m));
+    };
+    auto [lo, hi] = anchors(WIPE_TOWER_AUTO_MARGIN);
+    if (lo.x() > hi.x() || lo.y() > hi.y())
+        std::tie(lo, hi) = anchors(WIPE_TOWER_MARGIN);
+    if (lo.x() > hi.x() || lo.y() > hi.y())
+        return false;
+
+    std::array<Point, 4> corners{lo, Point(hi.x(), lo.y()), hi, Point(lo.x(), hi.y())};
+    std::sort(corners.begin(), corners.end(), [&tower_bb](const Point &a, const Point &b) {
+        return (a - tower_bb.min).cast<double>().squaredNorm() < (b - tower_bb.min).cast<double>().squaredNorm();
+    });
+    const Polygon footprint = BoundingBox(Point::Zero(), size).polygon();
+    for (const Point &corner : corners)
+        if (const std::optional<Point> anchor = nearest_clear_wipe_tower_anchor(BoundingBox(corner, corner), footprint, obstacles, corner)) {
+            tower.translation += *anchor - tower_bb.min;
+            return true;
+        }
+    return false;
+}
+
+void set_wipe_tower_position(int plate_idx, const Vec2d &pos)
+{
+    DynamicConfig &proj_cfg = wxGetApp().preset_bundle->project_config;
+    ConfigOptionFloat x(pos.x()), y(pos.y());
+    proj_cfg.option<ConfigOptionFloats>("wipe_tower_x", true)->set_at(&x, plate_idx, 0);
+    proj_cfg.option<ConfigOptionFloats>("wipe_tower_y", true)->set_at(&y, plate_idx, 0);
 }
 
 std::optional<arrangement::ArrangePolygon>
