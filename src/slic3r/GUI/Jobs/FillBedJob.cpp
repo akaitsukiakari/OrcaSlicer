@@ -42,6 +42,7 @@ void FillBedJob::prepare()
 {
     PartPlateList& plate_list = m_plater->get_partplate_list();
 
+    m_object_idxs.clear();
     m_locked.clear();
     m_selected.clear();
     m_unselected.clear();
@@ -49,100 +50,94 @@ void FillBedJob::prepare()
 
     params = init_arrange_params(m_plater);
 
-    m_object_idx = m_plater->get_selected_object_idx();
-    if (m_object_idx == -1)
+    Model& model = m_plater->model();
+
+    // Every object touched by the selection is a fill template, using its
+    // first selected instance. The plate is filled with copies of each in turn.
+    struct FillTemplate
+    {
+        int            obj_idx;
+        int            inst_idx;
+        ArrangePolygon ap;
+        // Outline of the object's first printable instance, used for every copy.
+        ExPolygon      poly;
+        bool           has_poly = false;
+    };
+    std::vector<FillTemplate> templates;
+    for (const auto &[obj_idx, inst_idxs] : m_plater->get_selection().get_content()) {
+        if (obj_idx < 0 || obj_idx >= int(model.objects.size()))
+            continue;
+        const int inst_cnt = int(model.objects[obj_idx]->instances.size());
+        if (inst_cnt == 0)
+            continue;
+        const int inst_idx = inst_idxs.empty() ? 0 : std::clamp(*inst_idxs.begin(), 0, inst_cnt - 1);
+        m_object_idxs.push_back(obj_idx);
+        templates.push_back({obj_idx, inst_idx, {}, {}});
+    }
+    if (templates.empty())
         return;
 
     //select current plate at first
-    int sel_id = m_plater->get_selection().get_instance_idx();
-    sel_id = std::max(sel_id, 0);
-
-    int sel_ret = plate_list.select_plate_by_obj(m_object_idx, sel_id);
-    BOOST_LOG_TRIVIAL(debug) << __FUNCTION__ << boost::format(":select plate obj_id %1%, ins_id %2%, ret %3%}") % m_object_idx % sel_id % sel_ret;
+    int sel_ret = plate_list.select_plate_by_obj(templates.front().obj_idx, templates.front().inst_idx);
+    BOOST_LOG_TRIVIAL(debug) << __FUNCTION__ << boost::format(":select plate obj_id %1%, ins_id %2%, ret %3%}") % templates.front().obj_idx % templates.front().inst_idx % sel_ret;
 
     PartPlate* plate = plate_list.get_curr_plate();
-    Model& model = m_plater->model();
     BoundingBox plate_bb = plate->get_bounding_box_crd();
     int plate_cols = plate_list.get_plate_cols();
     int cur_plate_index = plate->get_index();
 
-    ModelObject *model_object = m_plater->model().objects[m_object_idx];
-    if (model_object->instances.empty()) return;
-
     const Slic3r::DynamicPrintConfig& global_config = wxGetApp().preset_bundle->full_config();
-    m_selected.reserve(model_object->instances.size());
     for (size_t oidx = 0; oidx < model.objects.size(); ++oidx)
     {
         ModelObject* mo = model.objects[oidx];
+        auto tmpl = std::find_if(templates.begin(), templates.end(),
+                                 [oidx](const FillTemplate &t) { return t.obj_idx == int(oidx); });
         for (size_t inst_idx = 0; inst_idx < mo->instances.size(); ++inst_idx)
         {
-            bool selected = (oidx == m_object_idx);
-
             ArrangePolygon ap = get_instance_arrange_poly(mo->instances[inst_idx], global_config);
             set_arrange_polygon_bed_exclusion_extruders(ap, *mo, *plate, global_config);
             BoundingBox ap_bb = ap.transformed_poly().contour.bounding_box();
             ap.name = mo->name;
 
-            if (selected)
+            if (tmpl != templates.end() && int(inst_idx) == tmpl->inst_idx)
+                tmpl->ap = ap;
+
+            if (tmpl != templates.end() && mo->instances[inst_idx]->printable)
             {
-                if (mo->instances[inst_idx]->printable)
-                {
-                    ++ap.priority;
-                    ap.itemid = m_selected.size();
-                    m_selected.emplace_back(ap);
+                if (!tmpl->has_poly) {
+                    tmpl->has_poly = true;
+                    tmpl->poly     = ap.poly;
                 }
-                else
-                {
-                    if (plate_bb.contains(ap_bb))
-                    {
-                        ap.bed_idx = 0;
-                        ap.itemid = m_unselected.size();
-                        ap.row = cur_plate_index / plate_cols;
-                        ap.col = cur_plate_index % plate_cols;
-                        ap.translation(X) -= bed_stride_x(m_plater) * ap.col;
-                        ap.translation(Y) += bed_stride_y(m_plater) * ap.row;
-                        m_unselected.emplace_back(ap);
-                    }
-                    else
-                    {
-                        ap.bed_idx = PartPlateList::MAX_PLATES_COUNT;
-                        ap.itemid = m_locked.size();
-                        m_locked.emplace_back(ap);
-                    }
-                }
+                ++ap.priority;
+                ap.itemid = m_selected.size();
+                m_selected.emplace_back(ap);
+            }
+            else if (plate_bb.contains(ap_bb))
+            {
+                ap.bed_idx = 0;
+                ap.itemid = m_unselected.size();
+                ap.row = cur_plate_index / plate_cols;
+                ap.col = cur_plate_index % plate_cols;
+                ap.translation(X) -= bed_stride_x(m_plater) * ap.col;
+                ap.translation(Y) += bed_stride_y(m_plater) * ap.row;
+                m_unselected.emplace_back(ap);
             }
             else
             {
-                if (plate_bb.contains(ap_bb))
-                {
-                    ap.bed_idx = 0;
-                    ap.itemid = m_unselected.size();
-                    ap.row = cur_plate_index / plate_cols;
-                    ap.col = cur_plate_index % plate_cols;
-                    ap.translation(X) -= bed_stride_x(m_plater) * ap.col;
-                    ap.translation(Y) += bed_stride_y(m_plater) * ap.row;
-                    m_unselected.emplace_back(ap);
-                }
-                else
-                {
-                    ap.bed_idx = PartPlateList::MAX_PLATES_COUNT;
-                    ap.itemid = m_locked.size();
-                    m_locked.emplace_back(ap);
-                }
+                ap.bed_idx = PartPlateList::MAX_PLATES_COUNT;
+                ap.itemid = m_locked.size();
+                m_locked.emplace_back(ap);
             }
         }
     }
-    /*
-    for (ModelInstance *inst : model_object->instances)
-        if (inst->printable) {
-            ArrangePolygon ap = get_arrange_poly(inst);
-            // Existing objects need to be included in the result. Only
-            // the needed amount of object will be added, no more.
-            ++ap.priority;
-            m_selected.emplace_back(ap);
-        }*/
 
-    if (m_selected.empty()) return;
+    // Objects without a printable instance are not copied.
+    templates.erase(std::remove_if(templates.begin(), templates.end(), [](const FillTemplate &t) { return !t.has_poly; }),
+                    templates.end());
+    if (templates.empty()) {
+        m_selected.clear();
+        return;
+    }
 
     bool enable_wrapping = global_config.option<ConfigOptionBool>("enable_wrapping_detection")->value;
     //add the virtual object into unselect list if has
@@ -152,61 +147,48 @@ void FillBedJob::prepare()
 
     m_bedpts = get_bed_shape(*m_plater->config());
 
-    auto &objects = m_plater->model().objects;
-    /*BoundingBox bedbb = get_extents(m_bedpts);
-
-    for (size_t idx = 0; idx < objects.size(); ++idx)
-        if (int(idx) != m_object_idx)
-            for (ModelInstance *mi : objects[idx]->instances) {
-                ArrangePolygon ap = get_arrange_poly(mi);
-                auto ap_bb = ap.transformed_poly().contour.bounding_box();
-
-                if (ap.bed_idx == 0 && !bedbb.contains(ap_bb))
-                    ap.bed_idx = arrangement::UNARRANGED;
-
-                m_unselected.emplace_back(ap);
-            }*/
     if (auto wt = get_wipe_tower_arrangepoly(*m_plater))
         m_unselected.emplace_back(std::move(*wt));
 
     double sc = scaled<double>(1.) * scaled(1.);
 
-    auto polys = offset_ex(m_selected.front().poly, params.min_obj_distance / 2);
-    ExPolygon poly = polys.empty() ? m_selected.front().poly : polys.front();
-    double poly_area = poly.area() / sc;
-    const ArrangePolygon &fill_template = m_selected.front();
+    // Area an item takes on the bed, including half the spacing around it.
+    auto spaced_area = [this, sc](const ExPolygon &p) {
+        auto polys = offset_ex(p, params.min_obj_distance / 2);
+        return (polys.empty() ? p : polys.front()).area() / sc;
+    };
+
     double unsel_area = std::accumulate(m_unselected.begin(),
                                         m_unselected.end(), 0.,
-                                        [cur_plate_index, &fill_template](double s, const auto &ap) {
+                                        [cur_plate_index, &templates](double s, const auto &ap) {
                                             //BBS: m_unselected instance is in the same partplate
                                             const bool exclusion_applies = !ap.is_bed_exclusion ||
-                                                bed_exclusion_applies(fill_template, ap);
+                                                std::any_of(templates.begin(), templates.end(), [&ap](const FillTemplate &t) {
+                                                    return bed_exclusion_applies(t.ap, ap);
+                                                });
                                             return s + (ap.bed_idx == cur_plate_index && exclusion_applies) * ap.poly.area();
-                                            //return s + (ap.bed_idx == 0) * ap.poly.area();
                                         }) / sc;
 
-    double fixed_area = unsel_area + m_selected.size() * poly_area;
+    double fixed_area = std::accumulate(m_selected.begin(), m_selected.end(), unsel_area,
+                                        [&spaced_area](double s, const ArrangePolygon &ap) { return s + spaced_area(ap.poly); });
+    double template_area = std::accumulate(templates.begin(), templates.end(), 0.,
+                                           [&spaced_area](double s, const FillTemplate &t) { return s + spaced_area(t.poly); }) /
+                           templates.size();
     double bed_area   = Polygon{m_bedpts}.area() / sc;
 
     // This is the maximum number of items, the real number will always be close but less.
-    int needed_items = (bed_area - fixed_area) / poly_area;
-
-    //int sel_id = m_plater->get_selection().get_instance_idx();
-    // if the selection is not a single instance, choose the first as template
-    //sel_id = std::max(sel_id, 0);
-    ModelInstance *mi = model_object->instances[sel_id];
-    ArrangePolygon template_ap = get_instance_arrange_poly(mi, global_config);
-    set_arrange_polygon_bed_exclusion_extruders(template_ap, *model_object, *plate, global_config);
+    int needed_items = (bed_area - fixed_area) / template_area;
 
     for (int i = 0; i < needed_items; ++i) {
-        ArrangePolygon ap = template_ap;
-        ap.poly = m_selected.front().poly;
+        const FillTemplate &t = templates[i % templates.size()];
+        ArrangePolygon ap = t.ap;
+        ap.poly = t.poly;
         ap.bed_idx = PartPlateList::MAX_PLATES_COUNT;
         ap.itemid = -1;
-        ap.setter = [this, mi](const ArrangePolygon &p) {
-            ModelObject *mo = m_plater->model().objects[m_object_idx];
+        ap.setter = [this, obj_idx = t.obj_idx, inst_idx = t.inst_idx](const ArrangePolygon &p) {
+            ModelObject *mo = m_plater->model().objects[obj_idx];
             if (m_instances) {
-                ModelInstance *new_instance = mo->add_instance(*mi);
+                ModelInstance *new_instance = mo->add_instance(*mo->instances[inst_idx]);
                 new_instance->apply_arrange_result(p.translation.cast<double>(), p.rotation);
             } else {
                 ModelObject* newObj = m_plater->model().add_object(*mo);
@@ -214,7 +196,6 @@ void FillBedJob::prepare()
                 for (ModelInstance *new_instance : newObj->instances)
                     new_instance->apply_arrange_result(p.translation.cast<double>(), p.rotation);
             }
-            //m_plater->sidebar().obj_list()->paste_objects_into_list({m_plater->model().objects.size()-1});
         };
         m_selected.emplace_back(ap);
     }
@@ -235,9 +216,12 @@ void FillBedJob::process(Ctl &ctl)
 {
     auto statustxt = _u8L("Filling");
     ctl.call_on_main_thread([this] { prepare(); }).wait();
-    ctl.update_status(0, statustxt);
 
-    if (m_object_idx == -1 || m_selected.empty()) return;
+    // Nothing to fill. Return before the progress notification is shown, as
+    // it only closes once the status reaches 100.
+    if (m_selected.empty()) return;
+
+    ctl.update_status(0, statustxt);
 
     update_arrange_params(params, m_plater->config(), m_selected);
 
@@ -308,8 +292,10 @@ void FillBedJob::process(Ctl &ctl)
             occupied_boxes.emplace_back(std::move(local_box));
         }
 
-        const Vec2f step = unscaled<float>(get_extents(m_selected.front().poly).size()) +
-                           Vec2f(m_selected.front().brim_width, m_selected.front().brim_width);
+        // One cell must hold the largest of the filled objects.
+        Vec2f step = Vec2f::Zero();
+        for (const ArrangePolygon &item : m_selected)
+            step = step.cwiseMax(unscaled<float>(get_extents(item.poly).size()) + Vec2f(item.brim_width, item.brim_width));
         const bool has_conditional_exclusions = has_bed_exclusion_regions(m_unselected);
         const std::vector<Vec2f> empty_cells =
             Plater::get_empty_cells(step, occupied_boxes, !has_conditional_exclusions);
@@ -345,17 +331,16 @@ void FillBedJob::finalize(bool canceled, std::exception_ptr &eptr)
     if (canceled || eptr)
         return;
 
-    if (m_object_idx == -1) return;
-
-    ModelObject *model_object = m_plater->model().objects[m_object_idx];
-    if (model_object->instances.empty()) return;
+    if (m_selected.empty()) return;
 
     //BBS: partplate
     PartPlateList& plate_list = m_plater->get_partplate_list();
     int plate_cols = plate_list.get_plate_cols();
     int cur_plate = plate_list.get_curr_plate_index();
 
-    size_t inst_cnt = model_object->instances.size();
+    std::vector<size_t> inst_cnts;
+    for (int obj_idx : m_object_idxs)
+        inst_cnts.push_back(m_plater->model().objects[obj_idx]->instances.size());
 
     int added_cnt = std::accumulate(m_selected.begin(), m_selected.end(), 0, [](int s, auto &ap) {
         return s + int(ap.priority == 0 && ap.bed_idx == 0);
@@ -394,15 +379,22 @@ void FillBedJob::finalize(bool canceled, std::exception_ptr &eptr)
             obj_list->update_printable_state(i, 0);
         }
 
-        if (m_instances && model_object->instances.size() > inst_cnt) {
-            const size_t new_instance_count = model_object->instances.size() - inst_cnt;
+        bool scene_updated = false;
+        for (size_t i = 0; m_instances && i < m_object_idxs.size(); ++i) {
+            const size_t inst_cnt = inst_cnts[i];
+            const size_t new_instance_count = m_plater->model().objects[m_object_idxs[i]]->instances.size() - inst_cnt;
+            if (new_instance_count == 0)
+                continue;
             // Match the normal add-instance flow: update the scene before the
             // object tree starts referring to the newly created instances.
-            m_plater->update();
+            if (!scene_updated) {
+                m_plater->update();
+                scene_updated = true;
+            }
             // A single-instance object has no instance children in the object
             // tree yet, so the first refresh must add the original as well.
             obj_list->increase_object_instances(
-                m_object_idx, inst_cnt == 1 ? new_instance_count + 1 : new_instance_count);
+                m_object_idxs[i], inst_cnt == 1 ? new_instance_count + 1 : new_instance_count);
         }
 
         BOOST_LOG_TRIVIAL(debug) << __FUNCTION__ << ": paste_objects_into_list";
