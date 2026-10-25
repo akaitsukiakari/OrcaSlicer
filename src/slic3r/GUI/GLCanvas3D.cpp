@@ -1554,6 +1554,8 @@ void GLCanvas3D::load_arrange_settings()
     load_bool("avoid_extrusion_cali_region",         m_arrange_settings_fff_seq_print.avoid_extrusion_cali_region);
     load_bool("keep_on_plate",                       m_arrange_settings_fff.keep_on_plate);
     load_bool("keep_on_plate",                       m_arrange_settings_fff_seq_print.keep_on_plate);
+    load_bool("wipe_tower_to_corner",                m_arrange_settings_fff.move_wipe_tower_to_corner);
+    load_bool("wipe_tower_to_corner",                m_arrange_settings_fff_seq_print.move_wipe_tower_to_corner);
     {
         std::string value = wxGetApp().app_config->get("arrange", "arrange_mode");
         if (value.size() == 1 && value[0] >= '0' && value[0] <= '3')
@@ -6666,6 +6668,7 @@ void GLCanvas3D::_render_arrange_menu(float left, float right, float bottom, flo
     std::string multi_material_key = "allow_multi_materials_on_same_plate";
     std::string avoid_extrusion_key = "avoid_extrusion_cali_region";
     const std::string keep_on_plate_key = "keep_on_plate", arrange_mode_key = "arrange_mode";
+    const std::string wipe_tower_corner_key = "wipe_tower_to_corner";
     std::string postfix;
     //BBS:
     bool seq_print = false;
@@ -6729,6 +6732,9 @@ void GLCanvas3D::_render_arrange_menu(float left, float right, float bottom, flo
         if (imgui->bbl_checkbox(_L("Keep objects on the plate when arranging one plate"), settings_out.keep_on_plate))
             appcfg->set("arrange", keep_on_plate_key, settings_out.keep_on_plate);
 
+        if (imgui->bbl_checkbox(_L("Move the prime tower to a corner of the plate"), settings_out.move_wipe_tower_to_corner))
+            appcfg->set("arrange", wipe_tower_corner_key, settings_out.move_wipe_tower_to_corner);
+
         const std::vector<std::string> modes = {
             _u8L_CONTEXT("Default", "Arrange mode"),
             _u8L("Fewest plates"),
@@ -6770,6 +6776,7 @@ void GLCanvas3D::_render_arrange_menu(float left, float right, float bottom, flo
         appcfg->erase("arrange", multi_material_key);
         appcfg->erase("arrange", avoid_extrusion_key);
         appcfg->erase("arrange", keep_on_plate_key);
+        appcfg->erase("arrange", wipe_tower_corner_key);
         appcfg->erase("arrange", arrange_mode_key);
     }
     ImGui::PopStyleVar(1);

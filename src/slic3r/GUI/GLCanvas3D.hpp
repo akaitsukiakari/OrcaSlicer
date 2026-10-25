@@ -616,6 +616,8 @@ public:
         // How arranging all plates spreads the objects over them.
         enum class Mode { Default, FewestPlates, LongestPlates, OnePerPlate };
         Mode  mode               = Mode::Default;
+        // Arranging and filling a plate first move its prime tower to a free corner.
+        bool  move_wipe_tower_to_corner = true;
     };
 
     struct OrientSettings

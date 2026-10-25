@@ -43,6 +43,7 @@ void FillBedJob::prepare()
     PartPlateList& plate_list = m_plater->get_partplate_list();
 
     m_object_idxs.clear();
+    m_moved_wipe_tower.reset();
     m_locked.clear();
     m_selected.clear();
     m_unselected.clear();
@@ -147,8 +148,22 @@ void FillBedJob::prepare()
 
     m_bedpts = get_bed_shape(*m_plater->config());
 
-    if (auto wt = get_wipe_tower_arrangepoly(*m_plater))
+    if (auto wt = get_wipe_tower_arrangepoly(*m_plater)) {
+        if (m_plater->canvas3D()->get_arrange_settings().move_wipe_tower_to_corner) {
+            // The grid fill leaves the existing instances where they are, so the tower keeps
+            // clear of them too.
+            ArrangePolygons fixed = m_unselected;
+            for (ArrangePolygon ap : m_selected) {
+                ap.bed_idx = wt->bed_idx;
+                ap.translation(X) -= bed_stride_x(m_plater) * (cur_plate_index % plate_cols);
+                ap.translation(Y) += bed_stride_y(m_plater) * (cur_plate_index / plate_cols);
+                fixed.emplace_back(std::move(ap));
+            }
+            if (move_wipe_tower_to_corner(*wt, fixed, m_bedpts))
+                m_moved_wipe_tower = std::make_pair(cur_plate_index, unscaled(wt->translation));
+        }
         m_unselected.emplace_back(std::move(*wt));
+    }
 
     double sc = scaled<double>(1.) * scaled(1.);
 
@@ -352,6 +367,12 @@ void FillBedJob::finalize(bool canceled, std::exception_ptr &eptr)
     });
 
     int oldSize = m_plater->model().objects.size();
+
+    if (m_moved_wipe_tower) {
+        set_wipe_tower_position(m_moved_wipe_tower->first, m_moved_wipe_tower->second);
+        if (added_cnt == 0)
+            m_plater->update();
+    }
 
     if (added_cnt > 0) {
         //BBS: adjust the selected instances

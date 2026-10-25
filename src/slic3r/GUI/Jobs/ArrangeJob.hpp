@@ -3,12 +3,15 @@
 
 
 #include <map>
+#include "libslic3r/Point.hpp"
 #include "libslic3r/Polygon.hpp"
 #include <exception>
 #include <functional>
 #include <string>
 #include <optional>
+#include <utility>
 #include <vector>
+#include <cstddef>
 
 #include "Job.hpp"
 #include "libslic3r/Arrange.hpp"
@@ -74,6 +77,10 @@ class ArrangeJob : public Job
     std::vector<double> m_selected_print_time;
     // Names of the items left where they were because they did not fit on the plate.
     std::vector<std::string> m_left_in_place;
+    // Prime towers already on a plate: the plate and the tower's item in m_unselected.
+    std::vector<std::pair<int, size_t>> m_wipe_towers;
+    // Towers prepare() moved to a corner: the plate and the new position, applied in finalize().
+    std::vector<std::pair<int, Vec2d>> m_moved_wipe_towers;
 
     // The arrange modes, run in process() on the items prepared for them.
     using Arranger = std::function<void(ArrangePolygons& items, const ArrangePolygons& fixed, const arrangement::ArrangeParams& params)>;
@@ -93,6 +100,7 @@ class ArrangeJob : public Job
     //BBS:prepare the items from current selected partplate
     void prepare_partplate();
     void prepare_wipe_tower();
+    void move_wipe_towers_to_corners();
     void prepare_belt_regions(int num_plates);
     void prepare_imex_zones();
 
@@ -120,6 +128,14 @@ public:
 };
 
 std::optional<arrangement::ArrangePolygon> get_wipe_tower_arrangepoly(const Plater &);
+
+// Objects get packed around the prime tower, so a tower left mid-plate breaks up their rows.
+// Moves `tower`, as the arranger sees it on the plate-local `bed`, to the corner of the bed
+// nearest to it where it is clear of the items of `fixed` on its bed. Returns false and leaves
+// it in place when no corner is clear.
+bool move_wipe_tower_to_corner(arrangement::ArrangePolygon &tower, const arrangement::ArrangePolygons &fixed, const Points &bed);
+// Saves the prime tower position of a plate, in the plate's coordinates.
+void set_wipe_tower_position(int plate_idx, const Vec2d &pos);
 
 // The gap between logical beds in the x axis expressed in ratio of
 // the current bed width.
