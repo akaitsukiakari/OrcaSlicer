@@ -6,6 +6,7 @@
 #include "libslic3r/Arrange.hpp"
 #include "libslic3r/Point.hpp"
 #include <exception>
+#include <vector>
 
 namespace Slic3r { namespace GUI {
 
@@ -13,7 +14,8 @@ class Plater;
 
 class FillBedJob : public Job
 {
-    int     m_object_idx = -1;
+    // Objects being copied.
+    std::vector<int> m_object_idxs;
 
     using ArrangePolygon  = arrangement::ArrangePolygon;
     using ArrangePolygons = arrangement::ArrangePolygons;
