@@ -4571,6 +4571,9 @@ void GUI_App::init_label_colours()
 #endif
     m_color_window_default          = is_dark_mode ? wxColour(43, 43, 43)   : wxSystemSettings::GetColour(wxSYS_COLOUR_WINDOW);
     StateColor::SetDarkMode(is_dark_mode);
+    // Preferences > Accent color; empty keeps the ORCA green.
+    const std::string accent = app_config != nullptr ? app_config->get("accent_color") : std::string();
+    StateColor::SetAccentColor(accent.empty() ? wxNullColour : wxColour(accent));
 }
 
 void GUI_App::update_label_colours_from_appconfig()

@@ -192,13 +192,47 @@ std::map<wxColour, wxColour> const & StateColor::GetDarkMap()
 
 void StateColor::SetDarkMode(bool dark) { gDarkMode = dark; }
 
+// ORCA green family -> user accent shades, empty when no accent is set.
+static std::map<wxColour, wxColour> gAccentColors;
+
+static wxColour accent_color_for(wxColour const &color)
+{
+    auto iter = gAccentColors.find(color);
+    return iter != gAccentColors.end() ? iter->second : color;
+}
+
+void StateColor::SetAccentColor(wxColour const &accent)
+{
+    gAccentColors.clear();
+    if (!accent.IsOk())
+        return;
+    // Roughly the shades the green family has against white, black and the dark window background.
+    auto blend = [](wxColour const &c, wxColour const &bg, double a) {
+        return wxColour((unsigned char) std::lround(c.Red() * a + bg.Red() * (1. - a)),
+                        (unsigned char) std::lround(c.Green() * a + bg.Green() * (1. - a)),
+                        (unsigned char) std::lround(c.Blue() * a + bg.Blue() * (1. - a)));
+    };
+    const wxColour white("#FFFFFF"), black("#000000"), dark_bg("#2D2D31");
+    const wxColour dark = blend(accent, black, 0.69);
+    gAccentColors = {
+        {wxColour("#009688"), accent},                       // ORCA color
+        {wxColour("#26A69A"), blend(accent, white, 0.85)},   // hover
+        {wxColour("#00675b"), dark},                         // dark mode
+        {wxColour("#008172"), blend(accent, black, 0.86)},   // dark mode hover
+        {wxColour("#BFE1DE"), blend(accent, white, 0.25)},   // 25% tint
+        {wxColour("#223C3C"), blend(accent, dark_bg, 0.25)}, // 25% tint, dark mode
+        {wxColour("#E5F0EE"), blend(accent, white, 0.10)},   // 10% tint
+        {wxColour("#283232"), blend(accent, dark_bg, 0.10)}, // 10% tint, dark mode
+    };
+}
+
 inline wxColour darkModeColorFor2(wxColour const &color)
 {
     if (!gDarkMode)
-        return color;
+        return accent_color_for(color);
     auto iter = gDarkColors.find(color);
-    if (iter != gDarkColors.end()) return iter->second;
-    return color;
+    if (iter != gDarkColors.end()) return accent_color_for(iter->second);
+    return accent_color_for(color);
 }
 
 std::map<wxColour, wxColour> revert(std::map<wxColour, wxColour> const & map)
@@ -212,8 +246,8 @@ wxColour StateColor::lightModeColorFor(wxColour const &color)
 {
     static std::map<wxColour, wxColour> gLightColors = revert(gDarkColors);
     auto iter = gLightColors.find(color);
-    if (iter != gLightColors.end()) return iter->second;
-    return color;
+    if (iter != gLightColors.end()) return accent_color_for(iter->second);
+    return accent_color_for(color);
 }
 
 wxColour StateColor::darkModeColorFor(wxColour const &color) { return darkModeColorFor2(color); }

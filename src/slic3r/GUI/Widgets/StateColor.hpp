@@ -35,6 +35,10 @@ public:
     static double LAB_Delta_E(const wxColour& c1, const wxColour& c2);
 
     static void SetDarkMode(bool dark);
+    // Replaces the ORCA green family (#009688, its hover, dark mode and tinted variants) with
+    // shades of accent wherever a color passes through darkModeColorFor/lightModeColorFor.
+    // An invalid colour restores the green.
+    static void SetAccentColor(wxColour const &accent);
 
     static std::map<wxColour, wxColour> const & GetDarkMap();
     static wxColour darkModeColorFor(wxColour const &color);
