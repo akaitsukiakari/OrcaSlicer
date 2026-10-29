@@ -22,6 +22,7 @@
 #include "slic3r/GUI/LazyPage.hpp"
 #include "slic3r/GUI/Monitor.hpp"
 #include "slic3r/GUI/PrinterWebView.hpp"
+#include "slic3r/GUI/BookmarksPanel.hpp"
 #include "slic3r/GUI/MultiMachinePage.hpp"
 #include "slic3r/GUI/CalibrationPanel.hpp"
 #include "slic3r/GUI/ReleaseNote.hpp"
@@ -1593,6 +1594,12 @@ void MainFrame::init_tabpanel() {
     m_calibration_page = new LazyPage<CalibrationPanel>(m_tabpanel, TAB_ID_CALIBRATION, 30);
     m_lazy_pages.push_back(m_calibration_page);
     m_tabpanel->AddPage(TAB_ID_CALIBRATION, m_calibration_page, _L("Calibration"), "tab_calibration_active");
+
+    // After Calibration, which show_device() re-inserts right after Project, so this tab keeps its
+    // place. Never prebuilt: its web view is only worth creating once the tab is opened.
+    m_bookmarks_page = new LazyPage<BookmarksPanel>(m_tabpanel, TAB_ID_BOOKMARKS, -1);
+    m_lazy_pages.push_back(m_bookmarks_page);
+    m_tabpanel->AddPage(TAB_ID_BOOKMARKS, m_bookmarks_page, _L("Bookmarks"), "tab_bookmarks_active");
 
     // Plugin pages are appended after the built-in tabs; their ids are namespaced
     // (plugin.<plugin_key>.<name>) so they can't collide with the built-in TAB_ID_* constants.

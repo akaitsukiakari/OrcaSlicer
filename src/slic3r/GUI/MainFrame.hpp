@@ -52,6 +52,7 @@
 #define TAB_ID_MULTI_DEVICE  "multi_device"
 #define TAB_ID_PROJECT       "project"
 #define TAB_ID_CALIBRATION   "calibration"
+#define TAB_ID_BOOKMARKS     "bookmarks"
 
 #define ENABEL_PRINT_ALL 0
 
@@ -80,6 +81,7 @@ class MultiMachinePage;
 class ProjectPanel;
 class CalibrationPanel;
 class PrinterWebView;
+class BookmarksPanel;
 class FilamentGroupPopup;
 class PA_Calibration_Dlg;
 class FlowRateCalibrationDialog;
@@ -533,6 +535,7 @@ public:
     LazyPage<CalibrationPanel>* m_calibration_page{ nullptr };
     LazyPage<WebViewPanel>* m_home_page { nullptr };
     LazyPage<PrinterWebView>* m_printer_view_page{nullptr};
+    LazyPage<BookmarksPanel>* m_bookmarks_page{nullptr};
     PluginPages           m_plugin_pages;
     wxLogWindow*          m_log_window { nullptr };
     // BBS
