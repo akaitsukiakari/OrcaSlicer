@@ -5,11 +5,14 @@
 
 #include <wx/panel.h>
 #include <wx/string.h>
+#include <wx/timer.h>
 
 #include "GUI_Utils.hpp"
 
 class wxBoxSizer;
 class wxWebView;
+class wxIconizeEvent;
+class wxTopLevelWindow;
 class Button;
 class Label;
 class TextInput;
@@ -33,7 +36,7 @@ public:
     explicit BookmarksPanel(wxWindow* parent);
     ~BookmarksPanel() override;
 
-    // Loads the remembered page the first time the tab is shown.
+    // Loads the selected page when the tab is shown and unloads it when the tab is hidden.
     bool Show(bool show = true) override;
 
 private:
@@ -47,12 +50,22 @@ private:
     void edit_bookmark(int idx);
     void remove_bookmark(int idx);
     void move_bookmark(int idx, int offset);
+    // Load the selected page if it isn't, or unload it (paused: after idle time, with a hint to
+    // resume). An unloaded page can't keep the display awake.
+    void resume();
+    void suspend(bool paused);
+    void update_view();
+    void on_iconize(wxIconizeEvent& evt);
 
     std::vector<Bookmark>     m_bookmarks;
     std::vector<BookmarkRow*> m_rows;
     int                       m_selected{-1};
     bool                      m_collapsed{false};
-    bool                      m_loaded{false};
+    // The selected page is loaded in m_browser.
+    bool                      m_active{false};
+    bool                      m_paused{false};
+    wxTimer                   m_idle_timer;
+    wxTopLevelWindow*         m_frame{nullptr};
 
     wxPanel*    m_sidebar{nullptr};
     wxBoxSizer* m_list_sizer{nullptr};
@@ -61,6 +74,7 @@ private:
     Button*     m_collapse_btn{nullptr};
     Button*     m_reload_btn{nullptr};
     Label*      m_empty_hint{nullptr};
+    Label*      m_paused_hint{nullptr};
     wxWebView*  m_browser{nullptr};
 };
 

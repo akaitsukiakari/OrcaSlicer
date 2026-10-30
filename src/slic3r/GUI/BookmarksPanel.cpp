@@ -20,6 +20,8 @@
 #include <wx/menu.h>
 #include <wx/sizer.h>
 #include <wx/textctrl.h>
+#include <wx/timer.h>
+#include <wx/toplevel.h>
 #include <wx/uri.h>
 #include <wx/utils.h>
 #include <wx/webview.h>
@@ -28,6 +30,10 @@
 #include <cstdlib>
 #include <functional>
 #include <utility>
+
+#ifdef _WIN32
+#include <windows.h>
+#endif
 
 namespace Slic3r { namespace GUI {
 
@@ -45,6 +51,21 @@ const wxColour ROW_TEXT("#262E30");
 const wxColour SEPARATOR("#EEEEEE");
 
 wxColour themed(const wxColour& color) { return StateColor::darkModeColorFor(color); }
+
+// A shown page is unloaded after this long without keyboard or mouse input, so a playing
+// camera stream can't keep the display awake.
+constexpr int IDLE_PAUSE_MINUTES = 5;
+
+// Milliseconds since the last keyboard or mouse input anywhere in the session, -1 if unknown.
+long long system_idle_ms()
+{
+#ifdef _WIN32
+    LASTINPUTINFO info{sizeof(LASTINPUTINFO), 0};
+    if (GetLastInputInfo(&info))
+        return (long long) (GetTickCount() - info.dwTime);
+#endif
+    return -1;
+}
 
 } // namespace
 
@@ -136,7 +157,9 @@ BookmarksPanel::BookmarksPanel(wxWindow* parent) : wxPanel(parent, wxID_ANY)
     m_reload_btn->SetStyle(ButtonStyle::Regular, ButtonType::Icon);
     m_reload_btn->SetToolTip(_L("Reload page"));
     m_reload_btn->Bind(wxEVT_BUTTON, [this](wxCommandEvent&) {
-        if (m_browser != nullptr)
+        if (!m_active)
+            resume();
+        else if (m_browser != nullptr)
             m_browser->Reload();
     });
     m_footer->Add(add_btn, 0, wxALL, FromDIP(4));
@@ -149,6 +172,9 @@ BookmarksPanel::BookmarksPanel(wxWindow* parent) : wxPanel(parent, wxID_ANY)
 
     m_empty_hint = new Label(this, _L("No bookmarks yet. Use the + button to add a web page, such as Spoolman or a camera stream."));
     m_empty_hint->Wrap(FromDIP(500));
+    m_paused_hint = new Label(this, _L("Paused after a few minutes without input, so the page can't keep the screen on. Click here or a bookmark to resume."));
+    m_paused_hint->SetCursor(wxCursor(wxCURSOR_HAND));
+    m_paused_hint->Bind(wxEVT_LEFT_UP, [this](wxMouseEvent&) { resume(); });
     m_browser    = WebView::CreateWebView(this, "");
     if (m_browser != nullptr) {
         // Pages that open a new window (target="_blank" links) stay in the tab.
@@ -161,6 +187,7 @@ BookmarksPanel::BookmarksPanel(wxWindow* parent) : wxPanel(parent, wxID_ANY)
 
     auto content = new wxBoxSizer(wxVERTICAL);
     content->Add(m_empty_hint, 0, wxALL, FromDIP(20));
+    content->Add(m_paused_hint, 0, wxALL, FromDIP(20));
     if (m_browser != nullptr)
         content->Add(m_browser, 1, wxEXPAND);
 
@@ -172,10 +199,24 @@ BookmarksPanel::BookmarksPanel(wxWindow* parent) : wxPanel(parent, wxID_ANY)
 
     rebuild_list();
     update_collapsed();
+
+    m_idle_timer.SetOwner(this);
+    Bind(wxEVT_TIMER, [this](wxTimerEvent&) {
+        const long long idle = system_idle_ms();
+        if (idle >= 0 && idle >= IDLE_PAUSE_MINUTES * 60 * 1000LL)
+            suspend(true);
+    });
+    if (wxTopLevelWindow* frame = dynamic_cast<wxTopLevelWindow*>(wxGetTopLevelParent(this))) {
+        m_frame = frame;
+        m_frame->Bind(wxEVT_ICONIZE, &BookmarksPanel::on_iconize, this);
+    }
 }
 
 BookmarksPanel::~BookmarksPanel()
 {
+    m_idle_timer.Stop();
+    if (m_frame != nullptr)
+        m_frame->Unbind(wxEVT_ICONIZE, &BookmarksPanel::on_iconize, this);
     if (m_browser != nullptr) {
         m_browser->Destroy();
         m_browser = nullptr;
@@ -185,11 +226,53 @@ BookmarksPanel::~BookmarksPanel()
 bool BookmarksPanel::Show(bool show)
 {
     const bool changed = wxPanel::Show(show);
-    if (show && !m_loaded) {
-        m_loaded = true;
-        select(m_selected);
-    }
+    // Another tab took over: unload the page, so nothing plays in the background.
+    if (show)
+        resume();
+    else
+        suspend(false);
     return changed;
+}
+
+void BookmarksPanel::on_iconize(wxIconizeEvent& evt)
+{
+    evt.Skip();
+    if (evt.IsIconized())
+        suspend(false);
+    else if (IsShown())
+        resume();
+}
+
+void BookmarksPanel::resume()
+{
+    m_paused = false;
+    if (!m_active && m_selected >= 0 && m_browser != nullptr) {
+        m_active = true;
+        m_browser->LoadURL(from_u8(m_bookmarks[m_selected].url));
+    }
+    if (m_active && system_idle_ms() >= 0)
+        m_idle_timer.Start(30 * 1000);
+    update_view();
+}
+
+void BookmarksPanel::suspend(bool paused)
+{
+    m_idle_timer.Stop();
+    if (m_active && m_browser != nullptr)
+        m_browser->LoadURL("about:blank");
+    m_active = false;
+    m_paused = paused;
+    update_view();
+}
+
+void BookmarksPanel::update_view()
+{
+    const bool empty = m_bookmarks.empty();
+    m_empty_hint->Show(empty);
+    m_paused_hint->Show(!empty && m_paused);
+    if (m_browser != nullptr)
+        m_browser->Show(!empty && !m_paused);
+    Layout();
 }
 
 void BookmarksPanel::load_bookmarks()
@@ -228,7 +311,7 @@ void BookmarksPanel::rebuild_list()
     m_rows.clear();
     for (size_t i = 0; i < m_bookmarks.size(); ++i) {
         const int idx = int(i);
-        auto      row = new BookmarkRow(m_sidebar, from_u8(m_bookmarks[i].name), [this, idx]() { select(idx); },
+        auto      row = new BookmarkRow(m_sidebar, from_u8(m_bookmarks[i].name), [this, idx]() { select(idx); resume(); },
                                         // After the click handler returns: the menu can rebuild the rows.
                                         [this, idx]() { CallAfter([this, idx]() { show_row_menu(idx); }); });
         row->set_selected(idx == m_selected);
@@ -236,13 +319,9 @@ void BookmarksPanel::rebuild_list()
         m_list_sizer->Add(row, 0, wxEXPAND);
         m_rows.push_back(row);
     }
-    const bool empty = m_bookmarks.empty();
-    m_empty_hint->Show(empty);
-    if (m_browser != nullptr)
-        m_browser->Show(!empty);
-    m_reload_btn->Show(!empty);
+    m_reload_btn->Show(!m_bookmarks.empty());
     m_sidebar->Layout();
-    Layout();
+    update_view();
 }
 
 void BookmarksPanel::update_collapsed()
@@ -270,7 +349,7 @@ void BookmarksPanel::select(int idx)
         m_rows[i]->set_selected(int(i) == idx);
     wxGetApp().app_config->set("app", KEY_SELECTED, std::to_string(idx));
     // Clicking the selected bookmark again goes back to its page.
-    if (m_browser != nullptr && m_loaded)
+    if (m_browser != nullptr && m_active)
         m_browser->LoadURL(from_u8(m_bookmarks[idx].url));
 }
 
@@ -305,6 +384,7 @@ void BookmarksPanel::add_bookmark()
     save_bookmarks();
     rebuild_list();
     select(m_selected);
+    resume();
 }
 
 void BookmarksPanel::edit_bookmark(int idx)
@@ -333,8 +413,7 @@ void BookmarksPanel::remove_bookmark(int idx)
     save_bookmarks();
     rebuild_list();
     if (m_bookmarks.empty()) {
-        if (m_browser != nullptr)
-            m_browser->LoadURL("about:blank");
+        suspend(false);
     } else if (was_selected) {
         select(std::max(m_selected, 0));
     }
