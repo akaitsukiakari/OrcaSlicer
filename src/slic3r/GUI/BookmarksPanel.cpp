@@ -27,6 +27,8 @@
 #include <wx/webview.h>
 
 #include <algorithm>
+#include <climits>
+#include <cmath>
 #include <cstdlib>
 #include <functional>
 #include <utility>
@@ -55,11 +57,17 @@ constexpr int UNLOAD_DELAY_MS = 5 * 60 * 1000;
 } // namespace
 
 // One entry of the sidebar, drawn by hand so the selection and hover colors survive the
-// app's dark mode pass. Collapsed, it shows the first letter of the name.
+// app's dark mode pass. Collapsed, it shows the first letter of the name. Dragging it
+// vertically reports the pointer's screen y to on_drag while moving and to on_drop on release.
 class BookmarkRow : public wxWindow
 {
 public:
-    BookmarkRow(wxWindow* parent, const wxString& name, std::function<void()> on_click, std::function<void()> on_menu)
+    BookmarkRow(wxWindow*                parent,
+                const wxString&          name,
+                std::function<void()>    on_click,
+                std::function<void()>    on_menu,
+                std::function<void(int)> on_drag,
+                std::function<void(int)> on_drop)
         : wxWindow(parent, wxID_ANY), m_name(name)
     {
         SetBackgroundStyle(wxBG_STYLE_PAINT);
@@ -70,12 +78,52 @@ public:
         Bind(wxEVT_PAINT, &BookmarkRow::on_paint, this);
         Bind(wxEVT_ENTER_WINDOW, [this](wxMouseEvent&) { m_hovered = true; Refresh(); });
         Bind(wxEVT_LEAVE_WINDOW, [this](wxMouseEvent&) { m_hovered = false; Refresh(); });
-        Bind(wxEVT_LEFT_UP, [on_click](wxMouseEvent&) { on_click(); });
         Bind(wxEVT_RIGHT_UP, [on_menu](wxMouseEvent&) { on_menu(); });
+        Bind(wxEVT_LEFT_DOWN, [this](wxMouseEvent& evt) {
+            m_press_y  = ClientToScreen(evt.GetPosition()).y;
+            m_dragging = false;
+            if (!HasCapture())
+                CaptureMouse();
+        });
+        Bind(wxEVT_MOTION, [this, on_drag](wxMouseEvent& evt) {
+            if (!HasCapture() || !evt.LeftIsDown())
+                return;
+            const int y = ClientToScreen(evt.GetPosition()).y;
+            if (!m_dragging && std::abs(y - m_press_y) > FromDIP(5)) {
+                m_dragging = true;
+                SetCursor(wxCursor(wxCURSOR_SIZENS));
+            }
+            if (m_dragging)
+                on_drag(y);
+        });
+        Bind(wxEVT_LEFT_UP, [this, on_click, on_drop](wxMouseEvent& evt) {
+            if (HasCapture())
+                ReleaseMouse();
+            const bool dragged = std::exchange(m_dragging, false);
+            SetCursor(wxCursor(wxCURSOR_HAND));
+            if (dragged)
+                on_drop(ClientToScreen(evt.GetPosition()).y);
+            else
+                on_click();
+        });
+        Bind(wxEVT_MOUSE_CAPTURE_LOST, [this, on_drag](wxMouseCaptureLostEvent&) {
+            if (std::exchange(m_dragging, false))
+                on_drag(INT_MIN);
+            SetCursor(wxCursor(wxCURSOR_HAND));
+        });
     }
 
     void set_selected(bool selected) { m_selected = selected; Refresh(); }
     void set_collapsed(bool collapsed) { m_collapsed = collapsed; Refresh(); }
+    // Where a dragged bookmark would land: a line along the top or bottom edge.
+    enum class DropLine { None, Top, Bottom };
+    void set_drop_line(DropLine line)
+    {
+        if (m_drop_line != line) {
+            m_drop_line = line;
+            Refresh();
+        }
+    }
 
 private:
     void on_paint(wxPaintEvent&)
@@ -100,12 +148,21 @@ private:
             const wxString text = wxControl::Ellipsize(m_name, dc, wxELLIPSIZE_END, size.x - 2 * pad);
             dc.DrawText(text, pad, (size.y - dc.GetTextExtent(text).y) / 2);
         }
+        if (m_drop_line != DropLine::None) {
+            const int thickness = FromDIP(2);
+            dc.SetPen(*wxTRANSPARENT_PEN);
+            dc.SetBrush(wxBrush(themed(ROW_SELECTED_BG)));
+            dc.DrawRectangle(FromDIP(4), m_drop_line == DropLine::Top ? 0 : size.y - thickness, size.x - FromDIP(8), thickness);
+        }
     }
 
     wxString m_name;
     bool     m_selected{false};
     bool     m_hovered{false};
     bool     m_collapsed{false};
+    bool     m_dragging{false};
+    int      m_press_y{0};
+    DropLine m_drop_line{DropLine::None};
 };
 
 BookmarksPanel::BookmarksPanel(wxWindow* parent) : wxPanel(parent, wxID_ANY)
@@ -285,9 +342,16 @@ void BookmarksPanel::rebuild_list()
     m_rows.clear();
     for (size_t i = 0; i < m_bookmarks.size(); ++i) {
         const int idx = int(i);
-        auto      row = new BookmarkRow(m_sidebar, from_u8(m_bookmarks[i].name), [this, idx]() { select(idx); resume(); },
-                                        // After the click handler returns: the menu can rebuild the rows.
-                                        [this, idx]() { CallAfter([this, idx]() { show_row_menu(idx); }); });
+        auto      row = new BookmarkRow(
+            m_sidebar, from_u8(m_bookmarks[i].name), [this, idx]() { select(idx); resume(); },
+            // After the mouse handler returns: the menu and the drop rebuild the rows.
+            [this, idx]() { CallAfter([this, idx]() { show_row_menu(idx); }); },
+            [this](int screen_y) { show_drop_position(screen_y); },
+            [this, idx](int screen_y) {
+                const int pos = drop_position(screen_y);
+                show_drop_position(INT_MIN);
+                CallAfter([this, idx, pos]() { move_bookmark_to(idx, pos); });
+            });
         row->set_selected(idx == m_selected);
         row->set_collapsed(m_collapsed);
         m_list_sizer->Add(row, 0, wxEXPAND);
@@ -391,6 +455,50 @@ void BookmarksPanel::remove_bookmark(int idx)
     } else if (was_selected) {
         select(std::max(m_selected, 0));
     }
+}
+
+int BookmarksPanel::drop_position(int screen_y) const
+{
+    int pos = 0;
+    for (const BookmarkRow* row : m_rows) {
+        const wxRect rect = row->GetScreenRect();
+        if (screen_y < rect.y + rect.height / 2)
+            break;
+        ++pos;
+    }
+    return pos;
+}
+
+void BookmarksPanel::show_drop_position(int screen_y)
+{
+    const int pos = screen_y == INT_MIN ? -1 : drop_position(screen_y);
+    for (int i = 0; i < int(m_rows.size()); ++i) {
+        auto line = BookmarkRow::DropLine::None;
+        if (i == pos)
+            line = BookmarkRow::DropLine::Top;
+        else if (i + 1 == pos && pos == int(m_rows.size()))
+            line = BookmarkRow::DropLine::Bottom;
+        m_rows[i]->set_drop_line(line);
+    }
+}
+
+void BookmarksPanel::move_bookmark_to(int idx, int pos)
+{
+    // pos counts the rows above the drop point, the dragged one included.
+    const int target = pos > idx ? pos - 1 : pos;
+    if (idx < 0 || idx >= int(m_bookmarks.size()) || target == idx)
+        return;
+    const Bookmark moved = m_bookmarks[idx];
+    m_bookmarks.erase(m_bookmarks.begin() + idx);
+    m_bookmarks.insert(m_bookmarks.begin() + target, moved);
+    if (m_selected == idx)
+        m_selected = target;
+    else if (idx < m_selected && m_selected <= target)
+        --m_selected;
+    else if (target <= m_selected && m_selected < idx)
+        ++m_selected;
+    save_bookmarks();
+    rebuild_list();
 }
 
 void BookmarksPanel::move_bookmark(int idx, int offset)

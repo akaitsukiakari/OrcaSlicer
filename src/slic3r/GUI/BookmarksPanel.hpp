@@ -50,6 +50,11 @@ private:
     void edit_bookmark(int idx);
     void remove_bookmark(int idx);
     void move_bookmark(int idx, int offset);
+    // Dragging: the row index a pointer at screen_y would drop before (rows.size() for the end),
+    // its marker (INT_MIN hides it), and the move.
+    int  drop_position(int screen_y) const;
+    void show_drop_position(int screen_y);
+    void move_bookmark_to(int idx, int pos);
     // Load the selected page if it isn't, or unload it. An unloaded page can't keep the display awake.
     void resume();
     void suspend();
