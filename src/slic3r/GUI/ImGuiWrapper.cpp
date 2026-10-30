@@ -64,6 +64,7 @@
 #include "I18N.hpp"
 #include "Search.hpp"
 #include "BitmapCache.hpp"
+#include "Widgets/StateColor.hpp"
 #include "GUI_App.hpp"
 #include "KeyChord.hpp"
 
@@ -210,10 +211,23 @@ const ImVec4 ImGuiWrapper::COL_WINDOW_BG         = { 1.000f, 1.000f, 1.000f, 1.0
 const ImVec4 ImGuiWrapper::COL_WINDOW_BG_DARK    = { 45 / 255.f, 45 / 255.f, 49 / 255.f, 1.f };
 const ImVec4 ImGuiWrapper::COL_TOOLBAR_BG        = { 250 / 255.f, 250 / 255.f, 250 / 255.f, 1.f }; // ORCA color matches with toolbar_background.png
 const ImVec4 ImGuiWrapper::COL_TOOLBAR_BG_DARK   = { 57  / 255.f, 60  / 255.f, 66  / 255.f, 1.f }; // ORCA color matches with toolbar_background_dark.png
-const ImVec4 ImGuiWrapper::COL_ORCA              = to_ImVec4(ColorRGBA::ORCA());
-const ImVec4 ImGuiWrapper::COL_ORCA_DARK         = { 0.f       , 103 / 255.f, 91  / 255.f, 1.f };
-const ImVec4 ImGuiWrapper::COL_ORCA_HOVER        = { 38 / 255.f, 166 / 255.f, 154 / 255.f, 1.f };
-const ImVec4 ImGuiWrapper::COL_ORCA_HOVER_DARK   = { 0.f       , 129 / 255.f, 114  / 255.f, 1.f };
+ImVec4 ImGuiWrapper::COL_ORCA                    = { 0.f       , 150 / 255.f, 136 / 255.f, 1.f };
+ImVec4 ImGuiWrapper::COL_ORCA_DARK               = { 0.f       , 103 / 255.f, 91  / 255.f, 1.f };
+ImVec4 ImGuiWrapper::COL_ORCA_HOVER              = { 38 / 255.f, 166 / 255.f, 154 / 255.f, 1.f };
+ImVec4 ImGuiWrapper::COL_ORCA_HOVER_DARK         = { 0.f       , 129 / 255.f, 114  / 255.f, 1.f };
+
+void ImGuiWrapper::update_accent_colors()
+{
+    auto accent = [](const char* green) {
+        const wxColour color = StateColor::accentColorFor(wxColour(green));
+        return ImVec4(color.Red() / 255.f, color.Green() / 255.f, color.Blue() / 255.f, 1.f);
+    };
+    COL_ORCA            = accent("#009688");
+    COL_ORCA_DARK       = accent("#00675b");
+    COL_ORCA_HOVER      = accent("#26A69A");
+    COL_ORCA_HOVER_DARK = accent("#008172");
+    ColorRGB::set_ORCA({COL_ORCA.x, COL_ORCA.y, COL_ORCA.z});
+}
 const ImVec4 ImGuiWrapper::COL_MODIFIED          = { 253.f / 255.f, 111.f / 255.f, 40.f / 255.f, 1}; // ORCA same color with m_color_label_modified
 const ImVec4 ImGuiWrapper::COL_WARNING           = to_ImVec4(ColorRGB::WARNING());
 
@@ -228,7 +242,7 @@ bool get_data_from_svg(const std::string &filename, unsigned int max_size_px, Th
 {
     bool compression_enabled = false;
 
-    NSVGimage *image = nsvgParseFromFile(filename.c_str(), "px", 96.0f);
+    NSVGimage *image = BitmapCache::nsvgParseFromFileWithAccent(filename.c_str());
     if (image == nullptr) { return false; }
 
     float scale = (float) max_size_px / std::max(image->width, image->height);
@@ -2851,10 +2865,10 @@ void ImGuiWrapper::push_confirm_button_style() {
         ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.f, 1.f, 1.f, 0.88f));
     }
     else {
-        ImGui::PushStyleColor(ImGuiCol_Button,        to_ImVec4(decode_color_to_float_array("#009688")));
-        ImGui::PushStyleColor(ImGuiCol_Border, ImVec4(0.f / 255.f, 150.f / 255.f, 136.f / 255.f, 1.f));
-        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, to_ImVec4(decode_color_to_float_array("#26A69A")));
-        ImGui::PushStyleColor(ImGuiCol_ButtonActive,  to_ImVec4(decode_color_to_float_array("#009688")));
+        ImGui::PushStyleColor(ImGuiCol_Button,        COL_ORCA);
+        ImGui::PushStyleColor(ImGuiCol_Border,        COL_ORCA);
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, COL_ORCA_HOVER);
+        ImGui::PushStyleColor(ImGuiCol_ButtonActive,  COL_ORCA);
         ImGui::PushStyleColor(ImGuiCol_CheckMark, ImVec4(1.f, 1.f, 1.f, 1.f));
         ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.f, 1.f, 1.f, 1.f));
     }
@@ -2939,10 +2953,10 @@ void ImGuiWrapper::push_radio_style(const float scale)
 {
     ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(1.5f, 1.5f) * scale); // ORCA ensure icon size stays consistent
     if (m_is_dark_mode) {
-        ImGui::PushStyleColor(ImGuiCol_CheckMark, to_ImVec4(decode_color_to_float_array("#009688"))); // ORCA use orca color for radio buttons
+        ImGui::PushStyleColor(ImGuiCol_CheckMark, COL_ORCA); // ORCA use orca color for radio buttons
         ImGui::PushStyleColor(ImGuiCol_Border   , to_ImVec4(decode_color_to_float_array("#949494"))); // ORCA match border color
     } else {
-        ImGui::PushStyleColor(ImGuiCol_CheckMark, to_ImVec4(decode_color_to_float_array("#009688"))); // ORCA use orca color for radio buttons
+        ImGui::PushStyleColor(ImGuiCol_CheckMark, COL_ORCA); // ORCA use orca color for radio buttons
         ImGui::PushStyleColor(ImGuiCol_Border   , to_ImVec4(decode_color_to_float_array("#7C8282"))); // ORCA match border color
     }
 }
@@ -3654,7 +3668,7 @@ void ImGuiWrapper::sub_title(const std::string &label)
 
 bool IMTexture::load_from_svg_file(const std::string& filename, unsigned width, unsigned height, ImTextureID& texture_id)
 {
-    NSVGimage* image = nsvgParseFromFile(filename.c_str(), "px", 96.0f);
+    NSVGimage* image = BitmapCache::nsvgParseFromFileWithAccent(filename.c_str());
     if (image == nullptr) {
         return false;
     }

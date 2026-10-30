@@ -39,7 +39,10 @@
 #include "libslic3r/Preset.hpp"
 #include "slic3r/GUI/Widgets/Button.hpp"
 #include <wx/chartype.h>
+#include <wx/colordlg.h>
+#include <wx/dcmemory.h>
 #include <wx/dirdlg.h>
+#include <wx/statbmp.h>
 #include "slic3r/GUI/GUI_Utils.hpp"
 #include "slic3r/GUI/GUI.hpp"
 #include "slic3r/GUI/Widgets/TabCtrl.hpp"
@@ -1260,6 +1263,54 @@ wxBoxSizer* PreferencesDialog::create_item_button(wxString title, wxString title
     return m_sizer;
 }
 
+wxBoxSizer* PreferencesDialog::create_item_colour(wxString title, wxString tooltip, std::string param, wxColour default_colour)
+{
+    wxBoxSizer* sizer = create_item_label(title, tooltip);
+
+    // A bitmap rather than a coloured panel, so the dark mode pass can't recolour the swatch.
+    auto swatch_bitmap = [this](const wxColour& colour) {
+        wxBitmap   bmp(FromDIP(36), FromDIP(20));
+        wxMemoryDC dc(bmp);
+        dc.SetBrush(wxBrush(colour));
+        dc.SetPen(wxPen(wxColour("#ACACAC")));
+        dc.DrawRectangle(0, 0, bmp.GetWidth(), bmp.GetHeight());
+        dc.SelectObject(wxNullBitmap);
+        return bmp;
+    };
+    auto current = [this, param, default_colour]() {
+        const std::string value = app_config->get(param);
+        return value.empty() ? default_colour : wxColour(value);
+    };
+    auto swatch = new wxStaticBitmap(m_parent, wxID_ANY, swatch_bitmap(current()));
+
+    auto apply = [this, param, swatch, swatch_bitmap, current](const std::string& value) {
+        if (app_config->get(param) == value)
+            return;
+        app_config->set(param, value);
+        swatch->SetBitmap(swatch_bitmap(current()));
+        MessageDialog msg(this, _L("The new color is used after OrcaSlicer is restarted."), _L("Restart Required"), wxOK | wxICON_INFORMATION);
+        msg.ShowModal();
+    };
+
+    auto change_btn = new Button(m_parent, _L("Change") + dots);
+    change_btn->SetStyle(ButtonStyle::Regular, ButtonType::Parameter);
+    change_btn->Bind(wxEVT_BUTTON, [this, apply, current](wxCommandEvent&) {
+        wxColourData data;
+        data.SetColour(current());
+        wxColourDialog dlg(this, &data);
+        if (dlg.ShowModal() == wxID_OK)
+            apply(into_u8(dlg.GetColourData().GetColour().GetAsString(wxC2S_HTML_SYNTAX)));
+    });
+    auto reset_btn = new Button(m_parent, _L("Reset"));
+    reset_btn->SetStyle(ButtonStyle::Regular, ButtonType::Parameter);
+    reset_btn->Bind(wxEVT_BUTTON, [apply](wxCommandEvent&) { apply(""); });
+
+    sizer->Add(swatch, 0, wxALIGN_CENTER_VERTICAL);
+    sizer->Add(change_btn, 0, wxALIGN_CENTER_VERTICAL | wxLEFT, FromDIP(10));
+    sizer->Add(reset_btn, 0, wxALIGN_CENTER_VERTICAL | wxLEFT, FromDIP(5));
+    return sizer;
+}
+
 wxBoxSizer* PreferencesDialog::create_item_downloads(wxString title, wxString tooltip)
 {
     wxString download_path = wxString::FromUTF8(app_config->get("download_path"));
@@ -1699,6 +1750,14 @@ void PreferencesDialog::create_items()
     auto item_darkmode         = create_item_darkmode(_L("Enable dark Mode"), "", "dark_color_mode");
     g_sizer->Add(item_darkmode);
 #endif
+
+    auto item_accent_colour    = create_item_colour(_L("Accent color"),
+        _L("Replaces the green of buttons, switches and highlights. Icons, web pages and the 3D view keep the green."), "accent_color", wxColour("#009688"));
+    g_sizer->Add(item_accent_colour);
+
+    auto item_modified_colour  = create_item_colour(_L("Changed setting color"),
+        _L("The color of setting labels and values that differ from the preset."), "label_clr_modified", wxColour("#F1754E"));
+    g_sizer->Add(item_modified_colour);
 
     auto item_single_instance  = create_item_checkbox(_L("Allow only one OrcaSlicer instance"),
     #if __APPLE__
