@@ -60,7 +60,8 @@ constexpr int IDLE_PAUSE_MINUTES = 5;
 long long system_idle_ms()
 {
 #ifdef _WIN32
-    LASTINPUTINFO info{sizeof(LASTINPUTINFO), 0};
+    LASTINPUTINFO info{};
+    info.cbSize = sizeof(info);
     if (GetLastInputInfo(&info))
         return (long long) (GetTickCount() - info.dwTime);
 #endif
