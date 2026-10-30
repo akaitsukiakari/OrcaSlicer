@@ -5,6 +5,7 @@
 
 #include "libslic3r/libslic3r.h"
 #include "GLTexture.hpp"
+#include "BitmapCache.hpp"
 
 #include "3DScene.hpp"
 #include "OpenGLManager.hpp"
@@ -358,7 +359,7 @@ bool GLTexture::load_from_svg_files_as_sprites_array(const std::vector<std::stri
         if (!boost::algorithm::iends_with(filename, ".svg"))
             continue;
 
-        NSVGimage* image = nsvgParseFromFile(filename.c_str(), "px", 96.0f);
+        NSVGimage* image = BitmapCache::nsvgParseFromFileWithAccent(filename.c_str());
         if (image == nullptr)
             continue;
 
@@ -954,7 +955,7 @@ bool GLTexture::load_from_svg(const std::string& filename, bool use_mipmaps, boo
 {
     const bool compression_enabled = compress && OpenGLManager::are_compressed_textures_supported();
 
-    NSVGimage* image = nsvgParseFromFile(filename.c_str(), "px", 96.0f);
+    NSVGimage* image = BitmapCache::nsvgParseFromFileWithAccent(filename.c_str());
     if (image == nullptr) {
         reset();
         return false;

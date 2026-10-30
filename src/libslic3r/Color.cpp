@@ -14,6 +14,15 @@
 static const float INV_255 = 1.0f / 255.0f;
 
 namespace Slic3r {
+
+static ColorRGB& orca_color()
+{
+    static ColorRGB color{0.0f, 150.f / 255.0f, 136.0f / 255};
+    return color;
+}
+
+const ColorRGB ColorRGB::ORCA() { return orca_color(); }
+void ColorRGB::set_ORCA(const ColorRGB& color) { orca_color() = color; }
 bool color_is_equal(const RGBA a, const RGBA& b)
 {
     for (size_t i = 0; i < 4; i++) {

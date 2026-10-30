@@ -4574,6 +4574,7 @@ void GUI_App::init_label_colours()
     // Preferences > Accent color; empty keeps the ORCA green.
     const std::string accent = app_config != nullptr ? app_config->get("accent_color") : std::string();
     StateColor::SetAccentColor(accent.empty() ? wxNullColour : wxColour(accent));
+    ImGuiWrapper::update_accent_colors();
 }
 
 void GUI_App::update_label_colours_from_appconfig()

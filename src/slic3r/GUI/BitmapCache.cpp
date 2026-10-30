@@ -290,6 +290,22 @@ wxBitmap* BitmapCache::load_png(const std::string &bitmap_name, unsigned width, 
     return this->insert(bitmap_key, wxImage_to_wxBitmap_with_alpha(std::move(image)));
 }
 
+std::map<std::string, std::string> BitmapCache::accent_replaces()
+{
+    std::map<std::string, std::string> replaces;
+    for (const char* green : {"#009688", "#00675b", "#00675B"}) {
+        const wxColour accent = StateColor::accentColorFor(wxColour(green));
+        if (accent != wxColour(green))
+            replaces[green] = into_u8(accent.GetAsString(wxC2S_HTML_SYNTAX));
+    }
+    return replaces;
+}
+
+NSVGimage* BitmapCache::nsvgParseFromFileWithAccent(const char* filename)
+{
+    return nsvgParseFromFileWithReplace(filename, "px", 96.0f, accent_replaces());
+}
+
 NSVGimage* BitmapCache::nsvgParseFromFileWithReplace(const char* filename, const char* units, float dpi, const std::map<std::string, std::string>& replaces)
 {
     std::string str;
@@ -377,8 +393,8 @@ wxBitmap* BitmapCache::load_svg(const std::string &bitmap_name, unsigned target_
                 to = "\"" + accent + "\"";
             else if (boost::iequals(to, "#009688") || boost::iequals(to, "#00675b"))
                 to = accent;
-        for (const char* from : {"#009688", "#00675b", "#00675B"})
-            replaces[from] = accent;
+        for (const char* green_svg : {"#009688", "#00675b", "#00675B"})
+            replaces[green_svg] = accent;
     }
     if (bitmap_name == "undo" && wxTheApp != nullptr && wxGetApp().app_config != nullptr) {
         const std::string modified = wxGetApp().app_config->get("label_clr_modified");

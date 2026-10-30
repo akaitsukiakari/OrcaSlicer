@@ -405,10 +405,12 @@ public:
     static const ImVec4 COL_TOOLBAR_BG_DARK;
     static const ImVec4 COL_SEPARATOR;
     static const ImVec4 COL_SEPARATOR_DARK;
-    static const ImVec4 COL_ORCA;
-    static const ImVec4 COL_ORCA_DARK;
-    static const ImVec4 COL_ORCA_HOVER;
-    static const ImVec4 COL_ORCA_HOVER_DARK;
+    // The ORCA green family, replaced by shades of the Preferences accent color in update_accent_colors().
+    static ImVec4 COL_ORCA;
+    static ImVec4 COL_ORCA_DARK;
+    static ImVec4 COL_ORCA_HOVER;
+    static ImVec4 COL_ORCA_HOVER_DARK;
+    static void update_accent_colors();
     static const ImVec4 COL_MODIFIED;
     static const ImVec4 COL_WARNING;
 

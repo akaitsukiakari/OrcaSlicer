@@ -45,6 +45,10 @@ public:
 	// And makes replases befor parsing
 	// replace_map containes old_value->new_value
 	static NSVGimage* nsvgParseFromFileWithReplace(const char* filename, const char* units, float dpi, const std::map<std::string, std::string>& replaces);
+	// Replaces of the ORCA green (#009688, dark #00675b) by the accent of Preferences, empty when none is set.
+	static std::map<std::string, std::string> accent_replaces();
+	// nsvgParseFromFile() ("px", 96 dpi) with accent_replaces(), for the icons of the 3D scene.
+	static NSVGimage* nsvgParseFromFileWithAccent(const char* filename);
 	// Load svg from resources/icons. bitmap_key is given without the .svg suffix. SVG will be rasterized to provided height/width.
     wxBitmap* 		load_svg(const std::string &bitmap_key, unsigned width = 0, unsigned height = 0, const bool grayscale = false, const bool dark_mode = false, const std::string& new_color = "", const float scale_in_center = 0.f);
     //Load background image of semi transparent material with color,
