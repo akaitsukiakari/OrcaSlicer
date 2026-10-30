@@ -354,7 +354,7 @@ void BookmarksPanel::move_bookmark(int idx, int offset)
     rebuild_list();
 }
 
-BookmarkDialog::BookmarkDialog(wxWindow* parent, const wxString& title, const BookmarksPanel::Bookmark& bookmark)
+BookmarkDialog::BookmarkDialog(wxWindow* parent, const wxString& title, const BookmarksPanel::Bookmark& initial)
     : DPIDialog(parent, wxID_ANY, title, wxDefaultPosition, wxDefaultSize, wxDEFAULT_DIALOG_STYLE)
 {
     SetBackgroundColour(*wxWHITE);
@@ -362,8 +362,8 @@ BookmarkDialog::BookmarkDialog(wxWindow* parent, const wxString& title, const Bo
 
     auto grid = new wxFlexGridSizer(2, FromDIP(10), FromDIP(12));
     grid->AddGrowableCol(1);
-    m_name = new TextInput(this, from_u8(bookmark.name), "", "", wxDefaultPosition, wxSize(FromDIP(360), -1));
-    m_url  = new TextInput(this, from_u8(bookmark.url), "", "", wxDefaultPosition, wxSize(FromDIP(360), -1));
+    m_name = new TextInput(this, from_u8(initial.name), "", "", wxDefaultPosition, wxSize(FromDIP(360), -1));
+    m_url  = new TextInput(this, from_u8(initial.url), "", "", wxDefaultPosition, wxSize(FromDIP(360), -1));
     m_url->GetTextCtrl()->SetHint("http://192.168.0.10:7912");
     grid->Add(new Label(this, _L("Name")), 0, wxALIGN_CENTER_VERTICAL);
     grid->Add(m_name, 1, wxEXPAND);

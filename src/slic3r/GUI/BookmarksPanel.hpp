@@ -68,7 +68,7 @@ private:
 class BookmarkDialog : public DPIDialog
 {
 public:
-    BookmarkDialog(wxWindow* parent, const wxString& title, const BookmarksPanel::Bookmark& bookmark);
+    BookmarkDialog(wxWindow* parent, const wxString& title, const BookmarksPanel::Bookmark& initial);
 
     // The entered bookmark; a URL without a scheme gets "http://".
     BookmarksPanel::Bookmark bookmark() const;
