@@ -1585,21 +1585,23 @@ void MainFrame::init_tabpanel() {
         m_tabpanel->AddPage(TAB_ID_MULTI_DEVICE, m_multi_machine_page, _L("Multi-device"), "tab_multi_active");
     }
 
-    m_project_page = new LazyPage<ProjectPanel>(m_tabpanel, TAB_ID_PROJECT, 60);
-    m_lazy_pages.push_back(m_project_page);
-    m_tabpanel->AddPage(TAB_ID_PROJECT, m_project_page, _L("Project"), "tab_auxiliary_active");
-
     // show_device() removes this tab for printers without the Bambu device tab, and the page
     // then never builds its panel.
     m_calibration_page = new LazyPage<CalibrationPanel>(m_tabpanel, TAB_ID_CALIBRATION, 30);
     m_lazy_pages.push_back(m_calibration_page);
     m_tabpanel->AddPage(TAB_ID_CALIBRATION, m_calibration_page, _L("Calibration"), "tab_calibration_active");
 
-    // After Calibration, which show_device() re-inserts right after Project, so this tab keeps its
-    // place. Never prebuilt: its web view is only worth creating once the tab is opened.
+    // After Calibration, which show_device() re-inserts right after the device tabs, so Bookmarks
+    // and Project keep their places at the end. Never prebuilt: its web view is only worth
+    // creating once the tab is opened.
     m_bookmarks_page = new LazyPage<BookmarksPanel>(m_tabpanel, TAB_ID_BOOKMARKS, -1);
     m_lazy_pages.push_back(m_bookmarks_page);
     m_tabpanel->AddPage(TAB_ID_BOOKMARKS, m_bookmarks_page, _L("Bookmarks"), "tab_bookmarks_active");
+
+    // Last of the built-in tabs: rarely used.
+    m_project_page = new LazyPage<ProjectPanel>(m_tabpanel, TAB_ID_PROJECT, 60);
+    m_lazy_pages.push_back(m_project_page);
+    m_tabpanel->AddPage(TAB_ID_PROJECT, m_project_page, _L("Project"), "tab_auxiliary_active");
 
     // Plugin pages are appended after the built-in tabs; their ids are namespaced
     // (plugin.<plugin_key>.<name>) so they can't collide with the built-in TAB_ID_* constants.
@@ -1662,7 +1664,7 @@ void MainFrame::show_device(bool should_use_native) {
         }
         if (!m_calibration_page->in_book()) {
             m_calibration_page->Show(false);
-            m_tabpanel->InsertPage(m_tabpanel->PositionAfter({TAB_ID_PROJECT}), TAB_ID_CALIBRATION, m_calibration_page,
+            m_tabpanel->InsertPage(m_tabpanel->PositionAfter({TAB_ID_MULTI_DEVICE, TAB_ID_MONITOR_WEB, TAB_ID_MONITOR}), TAB_ID_CALIBRATION, m_calibration_page,
                                    _L("Calibration"), "tab_calibration_active");
         }
 
@@ -1711,9 +1713,9 @@ void MainFrame::show_device(bool should_use_native) {
                                    _L("Multi-device"), "tab_multi_active");
         }
         m_calibration_page->Show(false);
-        // Last of the built-in tabs, but plugin tabs already sit past it — anchor rather than
-        // append, so its position doesn't depend on the relayout() below running afterwards.
-        m_tabpanel->InsertPage(m_tabpanel->PositionAfter({TAB_ID_PROJECT}), TAB_ID_CALIBRATION, m_calibration_page,
+        // Right after the device tabs; Bookmarks, Project and plugin tabs already sit past it, so
+        // anchor rather than append.
+        m_tabpanel->InsertPage(m_tabpanel->PositionAfter({TAB_ID_MULTI_DEVICE, TAB_ID_MONITOR_WEB, TAB_ID_MONITOR}), TAB_ID_CALIBRATION, m_calibration_page,
                                _L("Calibration"), "tab_calibration_active");
 
 #ifdef _MSW_DARK_MODE
