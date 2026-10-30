@@ -31,10 +31,6 @@
 #include <functional>
 #include <utility>
 
-#ifdef _WIN32
-#include <windows.h>
-#endif
-
 namespace Slic3r { namespace GUI {
 
 namespace {
@@ -52,21 +48,9 @@ const wxColour SEPARATOR("#EEEEEE");
 
 wxColour themed(const wxColour& color) { return StateColor::darkModeColorFor(color); }
 
-// A shown page is unloaded after this long without keyboard or mouse input, so a playing
-// camera stream can't keep the display awake.
-constexpr int IDLE_PAUSE_MINUTES = 5;
-
-// Milliseconds since the last keyboard or mouse input anywhere in the session, -1 if unknown.
-long long system_idle_ms()
-{
-#ifdef _WIN32
-    LASTINPUTINFO info{};
-    info.cbSize = sizeof(info);
-    if (GetLastInputInfo(&info))
-        return (long long) (GetTickCount() - info.dwTime);
-#endif
-    return -1;
-}
+// A hidden page (another tab selected, or the window minimized) is unloaded after this long,
+// so a playing camera stream can't keep the display awake.
+constexpr int UNLOAD_DELAY_MS = 5 * 60 * 1000;
 
 } // namespace
 
@@ -173,9 +157,6 @@ BookmarksPanel::BookmarksPanel(wxWindow* parent) : wxPanel(parent, wxID_ANY)
 
     m_empty_hint = new Label(this, _L("No bookmarks yet. Use the + button to add a web page, such as Spoolman or a camera stream."));
     m_empty_hint->Wrap(FromDIP(500));
-    m_paused_hint = new Label(this, _L("Paused after a few minutes without input, so the page can't keep the screen on. Click here or a bookmark to resume."));
-    m_paused_hint->SetCursor(wxCursor(wxCURSOR_HAND));
-    m_paused_hint->Bind(wxEVT_LEFT_UP, [this](wxMouseEvent&) { resume(); });
     m_browser    = WebView::CreateWebView(this, "");
     if (m_browser != nullptr) {
         // Pages that open a new window (target="_blank" links) stay in the tab.
@@ -188,7 +169,6 @@ BookmarksPanel::BookmarksPanel(wxWindow* parent) : wxPanel(parent, wxID_ANY)
 
     auto content = new wxBoxSizer(wxVERTICAL);
     content->Add(m_empty_hint, 0, wxALL, FromDIP(20));
-    content->Add(m_paused_hint, 0, wxALL, FromDIP(20));
     if (m_browser != nullptr)
         content->Add(m_browser, 1, wxEXPAND);
 
@@ -201,12 +181,8 @@ BookmarksPanel::BookmarksPanel(wxWindow* parent) : wxPanel(parent, wxID_ANY)
     rebuild_list();
     update_collapsed();
 
-    m_idle_timer.SetOwner(this);
-    Bind(wxEVT_TIMER, [this](wxTimerEvent&) {
-        const long long idle = system_idle_ms();
-        if (idle >= 0 && idle >= IDLE_PAUSE_MINUTES * 60 * 1000LL)
-            suspend(true);
-    });
+    m_unload_timer.SetOwner(this);
+    Bind(wxEVT_TIMER, [this](wxTimerEvent&) { suspend(); });
     if (wxTopLevelWindow* frame = dynamic_cast<wxTopLevelWindow*>(wxGetTopLevelParent(this))) {
         m_frame = frame;
         m_frame->Bind(wxEVT_ICONIZE, &BookmarksPanel::on_iconize, this);
@@ -215,7 +191,7 @@ BookmarksPanel::BookmarksPanel(wxWindow* parent) : wxPanel(parent, wxID_ANY)
 
 BookmarksPanel::~BookmarksPanel()
 {
-    m_idle_timer.Stop();
+    m_unload_timer.Stop();
     if (m_frame != nullptr)
         m_frame->Unbind(wxEVT_ICONIZE, &BookmarksPanel::on_iconize, this);
     if (m_browser != nullptr) {
@@ -227,42 +203,40 @@ BookmarksPanel::~BookmarksPanel()
 bool BookmarksPanel::Show(bool show)
 {
     const bool changed = wxPanel::Show(show);
-    // Another tab took over: unload the page, so nothing plays in the background.
     if (show)
         resume();
     else
-        suspend(false);
+        m_unload_timer.StartOnce(UNLOAD_DELAY_MS);
     return changed;
 }
 
 void BookmarksPanel::on_iconize(wxIconizeEvent& evt)
 {
     evt.Skip();
+    if (!IsShown())
+        return;
     if (evt.IsIconized())
-        suspend(false);
-    else if (IsShown())
+        m_unload_timer.StartOnce(UNLOAD_DELAY_MS);
+    else
         resume();
 }
 
 void BookmarksPanel::resume()
 {
-    m_paused = false;
+    m_unload_timer.Stop();
     if (!m_active && m_selected >= 0 && m_browser != nullptr) {
         m_active = true;
         m_browser->LoadURL(from_u8(m_bookmarks[m_selected].url));
     }
-    if (m_active && system_idle_ms() >= 0)
-        m_idle_timer.Start(30 * 1000);
     update_view();
 }
 
-void BookmarksPanel::suspend(bool paused)
+void BookmarksPanel::suspend()
 {
-    m_idle_timer.Stop();
+    m_unload_timer.Stop();
     if (m_active && m_browser != nullptr)
         m_browser->LoadURL("about:blank");
     m_active = false;
-    m_paused = paused;
     update_view();
 }
 
@@ -270,9 +244,8 @@ void BookmarksPanel::update_view()
 {
     const bool empty = m_bookmarks.empty();
     m_empty_hint->Show(empty);
-    m_paused_hint->Show(!empty && m_paused);
     if (m_browser != nullptr)
-        m_browser->Show(!empty && !m_paused);
+        m_browser->Show(!empty);
     Layout();
 }
 
@@ -414,7 +387,7 @@ void BookmarksPanel::remove_bookmark(int idx)
     save_bookmarks();
     rebuild_list();
     if (m_bookmarks.empty()) {
-        suspend(false);
+        suspend();
     } else if (was_selected) {
         select(std::max(m_selected, 0));
     }

@@ -36,7 +36,7 @@ public:
     explicit BookmarksPanel(wxWindow* parent);
     ~BookmarksPanel() override;
 
-    // Loads the selected page when the tab is shown and unloads it when the tab is hidden.
+    // Loads the selected page when the tab is shown; a hidden tab unloads it after a delay.
     bool Show(bool show = true) override;
 
 private:
@@ -50,10 +50,9 @@ private:
     void edit_bookmark(int idx);
     void remove_bookmark(int idx);
     void move_bookmark(int idx, int offset);
-    // Load the selected page if it isn't, or unload it (paused: after idle time, with a hint to
-    // resume). An unloaded page can't keep the display awake.
+    // Load the selected page if it isn't, or unload it. An unloaded page can't keep the display awake.
     void resume();
-    void suspend(bool paused);
+    void suspend();
     void update_view();
     void on_iconize(wxIconizeEvent& evt);
 
@@ -63,8 +62,8 @@ private:
     bool                      m_collapsed{false};
     // The selected page is loaded in m_browser.
     bool                      m_active{false};
-    bool                      m_paused{false};
-    wxTimer                   m_idle_timer;
+    // Unloads the page a while after the tab is hidden or the window minimized.
+    wxTimer                   m_unload_timer;
     wxTopLevelWindow*         m_frame{nullptr};
 
     wxPanel*    m_sidebar{nullptr};
@@ -74,7 +73,6 @@ private:
     Button*     m_collapse_btn{nullptr};
     Button*     m_reload_btn{nullptr};
     Label*      m_empty_hint{nullptr};
-    Label*      m_paused_hint{nullptr};
     wxWebView*  m_browser{nullptr};
 };
 
