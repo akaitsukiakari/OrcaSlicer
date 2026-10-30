@@ -226,6 +226,8 @@ void StateColor::SetAccentColor(wxColour const &accent)
     };
 }
 
+wxColour StateColor::accentColorFor(wxColour const &color) { return accent_color_for(color); }
+
 inline wxColour darkModeColorFor2(wxColour const &color)
 {
     if (!gDarkMode)

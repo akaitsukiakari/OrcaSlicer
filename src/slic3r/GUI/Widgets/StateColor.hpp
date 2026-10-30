@@ -39,6 +39,8 @@ public:
     // shades of accent wherever a color passes through darkModeColorFor/lightModeColorFor.
     // An invalid colour restores the green.
     static void SetAccentColor(wxColour const &accent);
+    // The accent shade replacing color, or color itself when it is not of the green family.
+    static wxColour accentColorFor(wxColour const &color);
 
     static std::map<wxColour, wxColour> const & GetDarkMap();
     static wxColour darkModeColorFor(wxColour const &color);
