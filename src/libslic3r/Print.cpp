@@ -2648,14 +2648,21 @@ StringObjectException Print::validate(std::vector<StringObjectException> *warnin
                 }
             }
 
-            // Do we have custom support data that would not be used?
+            // Do we have custom support data that would not be used, or would not be the only support generated?
             // Notify the user in that case.
-            if (! object->has_support()) {
+            const bool support_off  = !object->has_support();
+            const bool support_auto = !support_off && is_auto(object->config().support_type.value);
+            if (support_off || support_auto) {
                 for (const ModelVolume* mv : object->model_object()->volumes) {
                     bool has_enforcers = mv->is_support_enforcer() ||
                         (mv->is_model_part() && mv->supported_facets.has_facets(*mv, EnforcerBlockerType::ENFORCER));
                     if (has_enforcers) {
-                        warn(L("Support enforcers are used but support is not enabled. Please enable support."), "", object);
+                        if (support_off)
+                            warn(L("Support enforcers are used but support is not enabled. Please enable support."), "", object);
+                        else
+                            warn(L("Support enforcers are used but the support type is set to auto, so support will also be generated "
+                                   "outside the enforced areas. Use a manual support type to generate support only on enforced areas."),
+                                 "support_type", object);
                         break;
                     }
                 }
