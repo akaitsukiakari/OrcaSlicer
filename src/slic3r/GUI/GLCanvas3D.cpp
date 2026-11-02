@@ -854,11 +854,25 @@ void GLCanvas3D::LayersEditing::accept_changes(GLCanvas3D & canvas)
 
 void GLCanvas3D::LayersEditing::update_slicing_parameters()
 {
-    if (m_slicing_parameters == nullptr) {
-        m_slicing_parameters = new SlicingParameters();
-        *m_slicing_parameters = PrintObject::slicing_parameters(*m_config, *m_model_object, m_object_max_z, m_shrinkage_compensation);
+    // Orca: the plate the object sits on may override the layer heights; slice the profile the way that plate does.
+    DynamicPrintConfig plate_heights;
+    if (last_object_id >= 0) {
+        PartPlateList& plates = wxGetApp().plater()->get_partplate_list();
+        if (int plate_idx = plates.find_instance(last_object_id, 0); plate_idx >= 0)
+            plate_heights.apply_only(*plates.get_plate(plate_idx)->config(), {"layer_height", "initial_layer_print_height"}, true);
     }
-
+    if (m_slicing_parameters != nullptr && plate_heights.keys() == m_plate_heights.keys() && plate_heights.equals(m_plate_heights))
+        return;
+    if (m_slicing_parameters != nullptr) {
+        // The plate's layer heights changed under a cached profile; rebuild it from the new parameters.
+        m_layer_height_profile.clear();
+        m_layers_texture.valid = false;
+    }
+    m_plate_heights = std::move(plate_heights);
+    DynamicPrintConfig config = *m_config;
+    config.apply(m_plate_heights);
+    delete m_slicing_parameters;
+    m_slicing_parameters = new SlicingParameters(PrintObject::slicing_parameters(config, *m_model_object, m_object_max_z, m_shrinkage_compensation));
 }
 
 float GLCanvas3D::LayersEditing::thickness_bar_width(const GLCanvas3D & canvas)
