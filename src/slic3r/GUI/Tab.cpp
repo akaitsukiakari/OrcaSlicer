@@ -3981,7 +3981,11 @@ void TabPrintModel::update_model_config()
     }
     m_config->apply(*m_parent_tab->m_config);
     if (m_type != Preset::TYPE_PLATE) {
-        m_config->apply_only(*wxGetApp().plate_tab->get_config(), plate_keys);
+        // Keys this tab edits itself (layer_height on an object) keep the process value as their base, not the
+        // value of whichever plate the plate tab last showed.
+        std::vector<std::string> keys;
+        std::copy_if(plate_keys.begin(), plate_keys.end(), std::back_inserter(keys), [this](const std::string& k) { return !has_key(k); });
+        m_config->apply_only(*wxGetApp().plate_tab->get_config(), keys);
     }
     m_null_keys.clear();
     if (!m_object_configs.empty()) {
@@ -4288,11 +4292,14 @@ void TabPrintPlate::build()
     optgroup->append_single_option_line("first_layer_sequence_choice");
     optgroup->append_single_option_line("other_layers_sequence_choice");
 
+    auto optgroup_layer_height = page->new_optgroup(L("Layer height"));
     auto optgroup_first_layer = page->new_optgroup(L("First layer"));
-    for (const std::string& key : plate_override_options())
-        optgroup_first_layer->append_single_option_line(key, "", print_options_with_variant.count(key) ? 0 : -1);
+    for (const std::string& key : plate_override_options()) {
+        auto group = key == "layer_height" || key == "initial_layer_print_height" ? optgroup_layer_height : optgroup_first_layer;
+        group->append_single_option_line(key, "", print_options_with_variant.count(key) ? 0 : -1);
+    }
 
-    for (auto group : {optgroup, optgroup_first_layer}) {
+    for (auto group : {optgroup, optgroup_layer_height, optgroup_first_layer}) {
         for (auto& line : const_cast<std::vector<Line>&>(group->get_lines())) {
             line.undo_to_sys = true;
         }

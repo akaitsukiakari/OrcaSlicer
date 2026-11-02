@@ -14,6 +14,7 @@
 #include "libslic3r/BoundingBox.hpp"
 #include <array>
 #include "libslic3r/Config.hpp"
+#include "libslic3r/PrintConfig.hpp"
 #include "libslic3r/Polygon.hpp"
 #include "libslic3r/Technologies.hpp"
 #include "libslic3r/Model.hpp"
@@ -271,6 +272,8 @@ class GLCanvas3D
         float                       m_object_max_z{ 0.0f };
         // Owned by LayersEditing.
         SlicingParameters* m_slicing_parameters{ nullptr };
+        // Orca: plate layer height overrides m_slicing_parameters was built with.
+        DynamicPrintConfig          m_plate_heights;
         std::vector<double>         m_layer_height_profile;
 
         // Orca: Shrinkage compensation to apply when we need to use object_max_z with Z compensation.
