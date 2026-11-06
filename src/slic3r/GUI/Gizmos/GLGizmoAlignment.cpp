@@ -1,12 +1,18 @@
 #include "GLGizmoAlignment.hpp"
 #include "slic3r/GUI/3DScene.hpp"
 #include "slic3r/GUI/GLCanvas3D.hpp"
+#include "slic3r/GUI/format.hpp"
+#include "slic3r/GUI/NotificationManager.hpp"
 #include "slic3r/GUI/GUI_App.hpp"
 #include "slic3r/GUI/I18N.hpp"
 #include "slic3r/GUI/PartPlate.hpp"
 #include "slic3r/GUI/Plater.hpp"
 #include "slic3r/GUI/Selection.hpp"
+#include "libslic3r/AppConfig.hpp"
 #include "libslic3r/BoundingBox.hpp"
+#include "libslic3r/BuildVolume.hpp"
+#include "libslic3r/LocalesUtils.hpp"
+#include "libslic3r/libslic3r.h"
 #include "libslic3r/Model.hpp"
 #include "libslic3r/Point.hpp"
 
@@ -546,42 +552,55 @@ bool GLGizmoAlignment::can_arrange_grid() const
     return !is_parts_selection(false) && get_items_count(AlignType::CENTER_X, false) >= 2;
 }
 
-bool GLGizmoAlignment::arrange_grid()
+namespace {
+
+const char *const GRID_SPACING_KEY = "grid_spacing";
+
+// Keeps the current order: rows from back to front, each row of cols from left to right.
+void sort_into_rows(std::vector<GLGizmoAlignment::ObjectInfo> &objects, size_t cols)
 {
-    if (!can_arrange_grid())
-        return false;
-
-    BoundingBoxf3 big_bb;
-    // The grid is laid out on the plate, so in world axes whatever the coordinate system.
-    auto          objects = get_selected_objects_info(big_bb, Matrix3d::Identity());
-    const size_t  count   = objects.size();
-    const size_t  cols    = size_t(std::ceil(std::sqrt(double(count))));
-    const size_t  rows    = (count + cols - 1) / cols;
-
-    // Every cell fits the largest footprint, spaced by the arrange spacing, or 5 mm when that is left on auto.
-    const float  spacing = m_canvas.get_arrange_settings().distance;
-    const double gap     = spacing > 0.f ? double(spacing) : 5.;
-    double       pitch_x = 0.;
-    double       pitch_y = 0.;
-    for (const ObjectInfo &obj : objects) {
-        pitch_x = std::max(pitch_x, obj.bbox.size().x());
-        pitch_y = std::max(pitch_y, obj.bbox.size().y());
-    }
-    pitch_x += gap;
-    pitch_y += gap;
-
-    // Keep the current order: rows from back to front, each row from left to right.
+    using ObjectInfo = GLGizmoAlignment::ObjectInfo;
     std::sort(objects.begin(), objects.end(), [](const ObjectInfo &a, const ObjectInfo &b) { return a.center.y() > b.center.y(); });
-    for (size_t row = 0; row < rows; ++row)
-        std::sort(objects.begin() + row * cols, objects.begin() + std::min(count, (row + 1) * cols),
+    for (size_t first = 0; first < objects.size(); first += cols)
+        std::sort(objects.begin() + first, objects.begin() + std::min(objects.size(), first + cols),
                   [](const ObjectInfo &a, const ObjectInfo &b) { return a.center.x() < b.center.x(); });
+}
 
-    if (!take_snapshot("Arrange in grid"))
+// Every cell fits the largest footprint.
+Vec2d largest_footprint(const std::vector<GLGizmoAlignment::ObjectInfo> &objects)
+{
+    Vec2d size = Vec2d::Zero();
+    for (const GLGizmoAlignment::ObjectInfo &obj : objects)
+        size = size.cwiseMax(Vec2d(obj.bbox.size().x(), obj.bbox.size().y()));
+    return size;
+}
+
+} // namespace
+
+double GLGizmoAlignment::grid_spacing() const
+{
+    const std::string value = wxGetApp().app_config->get("arrange", GRID_SPACING_KEY);
+    if (!value.empty())
+        return std::max(0., string_to_double_decimal_point(value));
+    const float spacing = m_canvas.get_arrange_settings().distance;
+    return spacing > 0.f ? double(spacing) : 5.;
+}
+
+void GLGizmoAlignment::set_grid_spacing(double spacing)
+{
+    wxGetApp().app_config->set("arrange", GRID_SPACING_KEY, float_to_string_decimal_point(std::max(0., spacing)));
+}
+
+bool GLGizmoAlignment::place_grid(const std::vector<ObjectInfo> &objects, size_t cols, const Vec3d &center, double pitch_x,
+                                  double pitch_y, const std::string &operation_name)
+{
+    if (!take_snapshot(operation_name))
         return false;
 
     get_selection().setup_cache();
 
-    const Vec3d center = big_bb.center();
+    const size_t count = objects.size();
+    const size_t rows  = (count + cols - 1) / cols;
     for (size_t i = 0; i < count; ++i) {
         const size_t row    = i / cols;
         const size_t col    = i % cols;
@@ -596,6 +615,67 @@ bool GLGizmoAlignment::arrange_grid()
 
     finish_operation();
     return true;
+}
+
+bool GLGizmoAlignment::arrange_grid()
+{
+    if (!can_arrange_grid())
+        return false;
+
+    BoundingBoxf3 big_bb;
+    // The grid is laid out on the plate, so in world axes whatever the coordinate system.
+    auto         objects = get_selected_objects_info(big_bb, Matrix3d::Identity());
+    const size_t cols    = size_t(std::ceil(std::sqrt(double(objects.size()))));
+    sort_into_rows(objects, cols);
+
+    const double gap  = grid_spacing();
+    const Vec2d  cell = largest_footprint(objects);
+    return place_grid(objects, cols, big_bb.center(), cell.x() + gap, cell.y() + gap, "Arrange in grid");
+}
+
+bool GLGizmoAlignment::distribute_grid()
+{
+    if (!can_arrange_grid())
+        return false;
+
+    BoundingBoxf3 big_bb;
+    auto          objects = get_selected_objects_info(big_bb, Matrix3d::Identity());
+    const size_t  count   = objects.size();
+
+    // The plate holding the first object, or the current one when that sticks out of every plate.
+    PartPlateList &plates    = wxGetApp().plater()->get_partplate_list();
+    const int      plate_idx = plates.find_instance_belongs(objects.front().object_idx, objects.front().instance_idx);
+    PartPlate     *plate     = plate_idx >= 0 ? plates.get_plate(plate_idx) : plates.get_curr_plate();
+    // The area every extruder reaches, as arrange uses.
+    const BoundingBoxf3 bed      = plate->get_build_volume(true);
+    const Vec2d         bed_size = Vec2d(bed.size().x(), bed.size().y()) - 2. * Vec2d::Constant(BuildVolume::SceneEpsilon);
+
+    // The column count whose even gaps, edges included, are the widest on the narrower axis; on a tie the wider grid.
+    const Vec2d cell      = largest_footprint(objects);
+    size_t      best_cols = 0;
+    Vec2d       best_gap  = Vec2d::Zero();
+    for (size_t cols = 1; cols <= count; ++cols) {
+        const size_t rows = (count + cols - 1) / cols;
+        const Vec2d  gap((bed_size.x() - double(cols) * cell.x()) / double(cols + 1),
+                         (bed_size.y() - double(rows) * cell.y()) / double(rows + 1));
+        if (best_cols == 0 || gap.minCoeff() >= best_gap.minCoeff() - EPSILON) {
+            best_cols = cols;
+            best_gap  = gap;
+        }
+    }
+
+    const double spacing = grid_spacing();
+    if (best_gap.minCoeff() < spacing) {
+        wxGetApp().plater()->get_notification_manager()->push_notification(
+            NotificationType::CustomNotification, NotificationManager::NotificationLevel::WarningNotificationLevel,
+            format(_u8L("The selected objects do not fit on the plate in a grid with %1% mm spacing."),
+                   float_to_string_decimal_point(spacing, 2)));
+        return false;
+    }
+
+    sort_into_rows(objects, best_cols);
+    const Vec3d center(bed.center().x(), bed.center().y(), 0.);
+    return place_grid(objects, best_cols, center, cell.x() + best_gap.x(), cell.y() + best_gap.y(), "Distribute in grid");
 }
 
 double GLGizmoAlignment::get_current_coord(std::string operation_name, BoundingBoxf3 &bbox)

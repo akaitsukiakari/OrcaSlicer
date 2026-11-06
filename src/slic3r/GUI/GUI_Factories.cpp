@@ -2480,6 +2480,14 @@ void MenuFactory::append_menu_item_align_distribute(wxMenu *menu)
                    GLGizmoAlignment(*plater()->get_view3D_canvas3D()).can_arrange_grid();
         },
         m_parent);
+    append_menu_item(
+        align_distribute_menu, wxID_ANY, _L("Distribute in grid"), _L("Spread selected objects over the plate in a grid, as far apart as they fit"),
+        [](wxCommandEvent &) { GLGizmoAlignment(*plater()->get_view3D_canvas3D()).distribute_grid(); }, "", nullptr,
+        []() {
+            return plater()->canvas3D()->get_canvas_type() == GLCanvas3D::ECanvasType::CanvasView3D &&
+                   GLGizmoAlignment(*plater()->get_view3D_canvas3D()).can_arrange_grid();
+        },
+        m_parent);
 
     // Anything that can be distributed can also be aligned, and aligning in X has no extra condition.
     append_submenu(menu, align_distribute_menu, wxID_ANY, _L("Align/Distribute"), _L("Align and distribute objects"), "",
