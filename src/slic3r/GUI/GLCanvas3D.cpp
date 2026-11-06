@@ -8585,6 +8585,26 @@ void GLCanvas3D::_rectangular_selection_picking_pass()
 
             if (render_tex != 0)
                 glsafe(::glDeleteTextures(1, &render_tex));
+
+        // Orca: the picking pass only sees the frontmost surface, so an object hidden behind another one
+        // (e.g. copies stacked in place by Ctrl+K without auto-arrange) is never picked. Also take every
+        // object whose bounding box lies fully inside the rectangle.
+        const Transform3d& view_matrix = main_camera.get_view_matrix();
+        std::vector<Vec3d> corners(8);
+        for (unsigned int i = 0; i < (unsigned int)m_volumes.volumes.size(); ++i) {
+            const GLVolume* v = m_volumes.volumes[i];
+            if (v == nullptr || !v->is_active || v->disabled || v->is_modifier || v->is_wipe_tower ||
+                v->composite_id.volume_id < 0 || idxs.count(int(i)) > 0)
+                continue;
+            const BoundingBoxf3& bb = v->transformed_bounding_box();
+            for (size_t c = 0; c < 8; ++c)
+                corners[c] = Vec3d((c & 1) ? bb.max.x() : bb.min.x(), (c & 2) ? bb.max.y() : bb.min.y(), (c & 4) ? bb.max.z() : bb.min.z());
+            // Points behind the camera don't project meaningfully.
+            const bool in_front = std::all_of(corners.begin(), corners.end(),
+                [&view_matrix](const Vec3d& p) { return (view_matrix * p).z() < 0.0; });
+            if (in_front && m_rectangle_selection.contains(corners).size() == corners.size())
+                idxs.insert(int(i));
+        }
     }
 
     m_hover_volume_idxs.assign(idxs.begin(), idxs.end());
