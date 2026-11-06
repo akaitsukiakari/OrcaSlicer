@@ -813,7 +813,8 @@ void GizmoObjectManipulation::do_render_move_window(ImGuiWrapper *imgui_wrapper,
         coord_combo_width = std::max({coord_combo_width, imgui_wrapper->calc_text_size(_L("Selection")).x,
                                       imgui_wrapper->calc_text_size(_L("Object")).x,
                                       imgui_wrapper->calc_text_size(_L("Plate")).x});
-        label_max         = std::max(label_max, imgui_wrapper->calc_text_size(_L("Distribute")).x);
+        label_max         = std::max({label_max, imgui_wrapper->calc_text_size(_L("Distribute")).x,
+                                      imgui_wrapper->calc_text_size(_L("Grid")).x, imgui_wrapper->calc_text_size(_L("Spacing")).x});
     }
     coord_combo_width += imgui_wrapper->calc_text_size("xxx"sv).x + imgui_wrapper->scaled(3.5f);
     float caption_max = std::max(label_max, coord_combo_width - 3 * space_size);
@@ -1058,14 +1059,38 @@ void GizmoObjectManipulation::do_render_move_window(ImGuiWrapper *imgui_wrapper,
             ImGui::SameLine(int(caption_max + space_size));
             ImGui::SetCursorPosY(center_in_row(row, button_height));
             const bool can_grid = m_alignment_helper.can_arrange_grid();
-            if (imgui_wrapper->button(_L("Arrange in grid"), ImVec2(0.f, button_height), can_grid))
-                m_alignment_helper.arrange_grid();
-            if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
-                wxString text = _L("Arrange selected objects in a grid");
+            auto grid_tooltip   = [&](wxString text) {
+                if (!ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+                    return;
                 if (!can_grid)
                     text += "\n" + _L("Select at least 2 objects");
                 imgui_wrapper->tooltip(text, imgui_wrapper->calc_text_size(text).x + 3 * space_size);
+            };
+            if (imgui_wrapper->button(_L("Arrange in grid"), ImVec2(0.f, button_height), can_grid))
+                m_alignment_helper.arrange_grid();
+            grid_tooltip(_L("Arrange selected objects in a grid"));
+            ImGui::SameLine(0, space_size);
+            if (imgui_wrapper->button(_L("Distribute"), ImVec2(0.f, button_height), can_grid))
+                m_alignment_helper.distribute_grid();
+            grid_tooltip(_L("Spread selected objects over the plate in a grid, as far apart as they fit"));
+
+            // Gap between the grid cells, and the least gap Distribute leaves.
+            row = 3;
+            ImGui::SetCursorPosY(center_in_row(row, ImGui::GetTextLineHeight()));
+            imgui_wrapper->text(_L("Spacing"));
+            ImGui::SameLine(int(caption_max + space_size));
+            ImGui::SetCursorPosY(center_in_row(row, ImGui::GetFrameHeight()));
+            double grid_spacing = m_alignment_helper.grid_spacing();
+            ImGui::PushItemWidth(unit_size);
+            if (ImGui::BBLInputDouble("##grid_spacing", &grid_spacing, 0.0f, 0.0f, "%.2f"))
+                GLGizmoAlignment::set_grid_spacing(std::clamp(grid_spacing, 0., 1000.));
+            if (ImGui::IsItemHovered()) {
+                const wxString text = _L("Gap between objects arranged or distributed in a grid");
+                imgui_wrapper->tooltip(text, imgui_wrapper->calc_text_size(text).x + 3 * space_size);
             }
+            ImGui::SameLine(0, space_size);
+            ImGui::SetCursorPosY(center_in_row(row, ImGui::GetTextLineHeight()));
+            imgui_wrapper->text(_L("mm"));
         }
         ImGui::PopStyleVar();
         ImGui::SetCursorPosY(row_top(row + 1));

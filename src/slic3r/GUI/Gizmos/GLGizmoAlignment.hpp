@@ -66,6 +66,13 @@ public:
     // current order, centered where they are now.
     bool arrange_grid();
     bool can_arrange_grid() const;
+    // Orca fork: spread the selected instances over their plate in the grid that leaves the widest even gaps, between
+    // them and to the plate edges alike. Leaves them in place and says so when they do not fit with grid_spacing().
+    bool distribute_grid();
+    // Orca fork: gap between grid cells in mm, as the user set it in the Move panel. Until then the arrange spacing,
+    // or 5 mm when that is left on auto.
+    double      grid_spacing() const;
+    static void set_grid_spacing(double spacing);
 
     // Object coordinate system: operations align along the axes of the selection's instance instead of the world axes.
     void set_object_cs(bool flag) { m_object_cs = flag; }
@@ -106,6 +113,9 @@ private:
     bool take_snapshot(const std::string& name);
     void apply_transformation(int obj_idx, int inst_idx, const Vec3d& displacement);
     void       finish_operation(bool force_volume_move = false);
+    // Moves objects, sorted into rows of cols, to the cells of a grid of the given pitch centered on center.
+    bool       place_grid(const std::vector<ObjectInfo> &objects, size_t cols, const Vec3d &center, double pitch_x,
+                          double pitch_y, const std::string &operation_name);
 };
 
 } // namespace GUI
