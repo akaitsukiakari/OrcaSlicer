@@ -7536,7 +7536,7 @@ void GLCanvas3D::_render_arrange_menu(float left, float right, float bottom, flo
         const std::vector<std::string> modes = {
             _u8L_CONTEXT("Default", "Arrange mode"),
             _u8L("Fewest plates"),
-            // TRN Arrange mode: fill the first plates with the objects that take longest to print.
+            // TRN Arrange mode: put as much print time as fits on the first plate, then the next.
             _u8L("Longest plates first"),
             _u8L("One object per plate"),
         };

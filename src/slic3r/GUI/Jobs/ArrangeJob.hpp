@@ -86,6 +86,7 @@ class ArrangeJob : public Job
     using Arranger = std::function<void(ArrangePolygons& items, const ArrangePolygons& fixed, const arrangement::ArrangeParams& params)>;
     void arrange_keeping_on_plate(const Arranger& arrange);
     void arrange_fewest_plates(const Arranger& arrange);
+    void arrange_most_time_per_plate(const Arranger& arrange);
     void arrange_one_object_per_plate(const Arranger& arrange);
 
     // clear m_selected and m_unselected, reserve space for next usage

@@ -907,13 +907,8 @@ void ArrangeJob::process(Ctl &ctl)
         arrange_keeping_on_plate(arrange);
     else if (!only_on_partplate && m_mode == int(Mode::FewestPlates))
         arrange_fewest_plates(arrange);
-    else if (!only_on_partplate && m_mode == int(Mode::LongestPlates)) {
-        // Fill each plate before the next, longest prints first.
-        arrangement::ArrangeParams p = params;
-        p.first_fit = true;
-        order_items(m_selected, [this](const ArrangePolygon &ap) { return m_selected_print_time[ap.itemid]; });
-        arrange(m_selected, m_unselected, p);
-    }
+    else if (!only_on_partplate && m_mode == int(Mode::LongestPlates))
+        arrange_most_time_per_plate(arrange);
     else if (!only_on_partplate && m_mode == int(Mode::OnePerPlate))
         arrange_one_object_per_plate(arrange);
     else
@@ -983,6 +978,8 @@ void ArrangeJob::arrange_keeping_on_plate(const Arranger &arrange)
 
 // The arranger already opens a plate only for an item no plate has room for, so fewer
 // plates come from a better packing order: try a few and keep the one using fewest plates.
+// Each order runs twice: once as the arranger picks a plate, which is the plate whose spot
+// scores best and so is often the emptier one, and once filling each plate before the next.
 void ArrangeJob::arrange_fewest_plates(const Arranger &arrange)
 {
     const std::vector<std::function<double(const ArrangePolygon &)>> orders = { nullptr, item_area, item_longest_side };
@@ -998,17 +995,87 @@ void ArrangeJob::arrange_fewest_plates(const Arranger &arrange)
     };
 
     ArrangePolygons best;
-    for (const auto &key : orders) {
-        ArrangePolygons items = m_selected;
-        if (key)
-            order_items(items, key);
-        arrange(items, m_unselected, params);
-        if (params.stopcondition())
-            return;
-        if (best.empty() || cost(items) < cost(best))
-            best = std::move(items);
-    }
+    for (const bool first_fit : { false, true })
+        for (const auto &key : orders) {
+            arrangement::ArrangeParams p = params;
+            p.first_fit = first_fit;
+            ArrangePolygons items = m_selected;
+            if (key)
+                order_items(items, key);
+            arrange(items, m_unselected, p);
+            if (params.stopcondition())
+                return;
+            if (best.empty() || cost(items) < cost(best))
+                best = std::move(items);
+        }
     m_selected = std::move(best);
+}
+
+// Fills the plates one at a time, each with as much print time as fits on it: packing a
+// plate is a knapsack of the remaining objects' times, so try a few orders and keep the one
+// that puts the most time on it. Packed objects stay where they are as fixed items while the
+// next plate is packed, so a later, smaller object can still take a gap on an earlier plate.
+void ArrangeJob::arrange_most_time_per_plate(const Arranger &arrange)
+{
+    arrangement::ArrangeParams p = params;
+    p.first_fit = true; // an object takes the first plate with room, not the emptiest
+
+    // Until it is arranged, an item's itemid is its index in m_selected.
+    const auto time = [this](const ArrangePolygon &ap) { return m_selected_print_time[ap.itemid]; };
+    const std::vector<std::function<double(const ArrangePolygon &)>> orders = {
+        time,
+        [&](const ArrangePolygon &ap) { return time(ap) / std::max(item_area(ap), 1.); },
+        item_area,
+    };
+
+    std::vector<size_t> left(m_selected.size());
+    std::iota(left.begin(), left.end(), 0);
+    ArrangePolygons fixed = m_unselected;
+    for (int plate = 0; !left.empty(); ++plate) {
+        const auto on_plate = [plate](const ArrangePolygon &ap) { return ap.bed_idx >= 0 && ap.bed_idx <= plate; };
+        ArrangePolygons best;
+        double          best_time = -1.;
+        for (const auto &key : orders) {
+            ArrangePolygons items;
+            for (size_t i : left)
+                items.push_back(m_selected[i]);
+            order_items(items, key);
+            arrange(items, fixed, p);
+            if (params.stopcondition())
+                return;
+            double placed_time = 0.;
+            size_t placed      = 0;
+            for (size_t k = 0; k < items.size(); ++k)
+                if (on_plate(items[k])) {
+                    placed_time += time(m_selected[left[k]]);
+                    ++placed;
+                }
+            if (placed_time > best_time) {
+                best_time = placed_time;
+                best      = std::move(items);
+            }
+            if (placed == left.size())
+                break; // everything fits, no order can do better
+        }
+
+        // Keep what landed on this plate or in a gap of an earlier one, and pack the rest again.
+        // When nothing fits even this plate, more plates will not help: take the packing as it is.
+        const bool take_all = plate + 1 >= MAX_NUM_PLATES || std::none_of(best.begin(), best.end(), on_plate);
+        std::vector<size_t> next;
+        for (size_t k = 0; k < best.size(); ++k) {
+            const size_t i = left[k];
+            if (take_all || on_plate(best[k])) {
+                const int itemid = m_selected[i].itemid;
+                m_selected[i]        = best[k];
+                m_selected[i].itemid = itemid; // the arranger renumbers it in packing order
+                fixed.push_back(m_selected[i]);
+            } else
+                next.push_back(i);
+        }
+        if (take_all)
+            break;
+        left = std::move(next);
+    }
 }
 
 // Arranges each object, with all its instances, alone on the next plate. An object whose
