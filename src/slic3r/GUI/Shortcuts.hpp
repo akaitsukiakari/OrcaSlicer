@@ -32,7 +32,7 @@ enum class Shortcut : uint8_t {
     // Editing
     Undo, Redo, Cut, Copy, Paste, DeleteSelected, DeleteAll, CloneSelected,
     // Objects
-    AddInstance, RemoveInstance, TogglePrintable, ToggleAutoDrop,
+    AddInstance, RemoveInstance, TogglePrintable, ToggleAutoDrop, ReloadFromDisk,
     // Placement
     Arrange, ArrangePlate, ArrangeGrid, Orient, OrientPlate,
     MoveSelectionLeft, MoveSelectionRight, MoveSelectionUp, MoveSelectionDown, RotateSelectionLeft, RotateSelectionRight,
