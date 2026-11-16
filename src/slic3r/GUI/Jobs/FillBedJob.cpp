@@ -408,9 +408,15 @@ void FillBedJob::finalize(bool canceled, std::exception_ptr &eptr)
         bool scene_updated = false;
         for (size_t i = 0; m_instances && i < m_object_idxs.size(); ++i) {
             const size_t inst_cnt = inst_cnts[i];
-            const size_t new_instance_count = m_plater->model().objects[m_object_idxs[i]]->instances.size() - inst_cnt;
+            const ModelObject* obj = m_plater->model().objects[m_object_idxs[i]];
+            const size_t new_instance_count = obj->instances.size() - inst_cnt;
             if (new_instance_count == 0)
                 continue;
+            // Register the copies with the plate they land on, which is what plate lookups and
+            // object labels read. As new instances they take a spiral-vase plate's settings
+            // without asking once per copy, as the objects Fill bed with copies adds do.
+            for (size_t j = inst_cnt; j < obj->instances.size(); ++j)
+                plate_list.notify_instance_update(m_object_idxs[i], int(j), true);
             // Match the normal add-instance flow: update the scene before the
             // object tree starts referring to the newly created instances.
             if (!scene_updated) {
