@@ -2148,6 +2148,11 @@ void GLCanvas3D::load_arrange_settings()
     load_bool("keep_on_plate",                       m_arrange_settings_fff_seq_print.keep_on_plate);
     load_bool("wipe_tower_to_corner",                m_arrange_settings_fff.move_wipe_tower_to_corner);
     load_bool("wipe_tower_to_corner",                m_arrange_settings_fff_seq_print.move_wipe_tower_to_corner);
+    for (ArrangeSettings *settings : {&m_arrange_settings_fff, &m_arrange_settings_fff_seq_print}) {
+        load_bool("classic_engine",  settings->classic_engine);
+        load_bool("center_on_plate", settings->center_on_plate);
+        load_bool("place_in_holes",  settings->place_in_holes);
+    }
     {
         std::string value = wxGetApp().app_config->get("arrange", "arrange_mode");
         if (value.size() == 1 && value[0] >= '0' && value[0] <= '3')
@@ -7467,6 +7472,7 @@ void GLCanvas3D::_render_arrange_menu(float left, float right, float bottom, flo
     std::string avoid_extrusion_key = "avoid_extrusion_cali_region";
     const std::string keep_on_plate_key = "keep_on_plate", arrange_mode_key = "arrange_mode";
     const std::string wipe_tower_corner_key = "wipe_tower_to_corner";
+    const std::string classic_engine_key = "classic_engine", center_on_plate_key = "center_on_plate", place_in_holes_key = "place_in_holes";
     std::string postfix;
     //BBS:
     bool seq_print = false;
@@ -7533,6 +7539,19 @@ void GLCanvas3D::_render_arrange_menu(float left, float right, float bottom, flo
         if (imgui->bbl_checkbox(_L("Move the prime tower to a corner of the plate"), settings_out.move_wipe_tower_to_corner))
             appcfg->set("arrange", wipe_tower_corner_key, settings_out.move_wipe_tower_to_corner);
 
+        if (imgui->bbl_checkbox(_L("Center objects on the plate"), settings_out.center_on_plate))
+            appcfg->set("arrange", center_on_plate_key, settings_out.center_on_plate);
+
+        // TRN Arrange option: use the arranger OrcaSlicer had before the grid arranger, to compare them.
+        if (imgui->bbl_checkbox(_L("Use the classic arranger"), settings_out.classic_engine))
+            appcfg->set("arrange", classic_engine_key, settings_out.classic_engine);
+
+        // Only the grid arranger knows the objects' holes.
+        imgui->disabled_begin(settings_out.classic_engine);
+        if (imgui->bbl_checkbox(_L("Place objects inside holes of other objects"), settings_out.place_in_holes))
+            appcfg->set("arrange", place_in_holes_key, settings_out.place_in_holes);
+        imgui->disabled_end();
+
         const std::vector<std::string> modes = {
             _u8L_CONTEXT("Default", "Arrange mode"),
             _u8L("Fewest plates"),
@@ -7576,6 +7595,9 @@ void GLCanvas3D::_render_arrange_menu(float left, float right, float bottom, flo
         appcfg->erase("arrange", keep_on_plate_key);
         appcfg->erase("arrange", wipe_tower_corner_key);
         appcfg->erase("arrange", arrange_mode_key);
+        appcfg->erase("arrange", classic_engine_key);
+        appcfg->erase("arrange", center_on_plate_key);
+        appcfg->erase("arrange", place_in_holes_key);
     }
     ImGui::PopStyleVar(1);
     imgui->end();

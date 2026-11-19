@@ -77,6 +77,9 @@ class ArrangeJob : public Job
     std::vector<double> m_selected_print_time;
     // Names of the items left where they were because they did not fit on the plate.
     std::vector<std::string> m_left_in_place;
+    // Why the classic arranger was used although the grid arranger was chosen, if it was.
+    enum class ClassicFallback { None, ByObject, Belt };
+    ClassicFallback m_classic_fallback{ClassicFallback::None};
     // Prime towers already on a plate: the plate and the tower's item in m_unselected.
     std::vector<std::pair<int, size_t>> m_wipe_towers;
     // Towers prepare() moved to a corner: the plate and the new position, applied in finalize().

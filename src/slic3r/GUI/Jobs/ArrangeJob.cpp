@@ -51,6 +51,11 @@
 #include <tuple>
 #include "libslic3r/ClipperUtils.hpp"
 #include "libslic3r/GCode/WipeTowerEstimate.hpp"
+#include "libslic3r/GridArrange.hpp"
+#include "libslic3r/TriangleMesh.hpp"
+#include "libslic3r/TriangleMeshSlicer.hpp"
+#include <memory>
+#include <mutex>
 
 #define SAVE_ARRANGE_POLY 0
 
@@ -251,6 +256,7 @@ void ArrangeJob::clear_input()
     m_selected_object.clear();
     m_selected_print_time.clear();
     m_left_in_place.clear();
+    m_classic_fallback = ClassicFallback::None;
     m_selected.reserve(count + 1 /* for optional wti */);
     m_unselected.reserve(count + 1 /* for optional wti */);
     m_unprintable.reserve(cunprint /* for optional wti */);
@@ -325,11 +331,77 @@ std::optional<double> sliced_print_time(const ModelInstance &instance)
     return it->second.seconds;
 }
 
+namespace {
+struct FootprintPart
+{
+    std::shared_ptr<const TriangleMesh> mesh;
+    Transform3d                         trafo;
+};
+
+// Footprints worked out before, by their parts: projecting a large mesh takes a while.
+struct CachedFootprint
+{
+    std::vector<std::pair<std::weak_ptr<const TriangleMesh>, Transform3d>> parts;
+    ExPolygons                                                             footprint;
+};
+std::mutex                  footprint_cache_mutex;
+std::vector<CachedFootprint> footprint_cache;
+
+ExPolygons footprint_of(const std::vector<FootprintPart> &parts)
+{
+    const auto matches = [&parts](const CachedFootprint &cached) {
+        if (cached.parts.size() != parts.size())
+            return false;
+        for (size_t i = 0; i < parts.size(); ++i)
+            if (cached.parts[i].first.lock() != parts[i].mesh || !cached.parts[i].second.isApprox(parts[i].trafo))
+                return false;
+        return true;
+    };
+    {
+        std::lock_guard<std::mutex> lock(footprint_cache_mutex);
+        footprint_cache.erase(std::remove_if(footprint_cache.begin(), footprint_cache.end(), [](const CachedFootprint &cached) {
+            return std::any_of(cached.parts.begin(), cached.parts.end(), [](const auto &part) { return part.first.expired(); });
+        }), footprint_cache.end());
+        if (const auto it = std::find_if(footprint_cache.begin(), footprint_cache.end(), matches); it != footprint_cache.end())
+            return it->footprint;
+    }
+
+    Polygons projection;
+    for (const FootprintPart &part : parts)
+        append(projection, project_mesh(part.mesh->its, part.trafo, []() {}));
+    // Grown by the simplification's tolerance first, so the simplified outline still covers the projection.
+    const double tolerance = scaled(0.05);
+    const ExPolygons footprint = expolygons_simplify(offset_ex(union_ex(projection), float(tolerance)), tolerance);
+
+    std::lock_guard<std::mutex> lock(footprint_cache_mutex);
+    CachedFootprint cached{{}, footprint};
+    for (const FootprintPart &part : parts)
+        cached.parts.emplace_back(part.mesh, part.trafo);
+    footprint_cache.push_back(std::move(cached));
+    return footprint;
+}
+} // namespace
+
 ArrangePolygon ArrangeJob::prepare_arrange_polygon(void *model_instance, const PartPlate *mapping_plate)
 {
     ModelInstance* instance = (ModelInstance*)model_instance;
     const Slic3r::DynamicPrintConfig& config = wxGetApp().preset_bundle->full_config();
     ArrangePolygon polygon = get_instance_arrange_poly(instance, config);
+    if (params.grid_engine) {
+        // The parts in the frame of polygon.poly: the instance without its Z rotation and X and Y offset,
+        // as ModelInstance::get_arrange_polygon() takes it. The meshes are shared, so the footprint can
+        // be worked out off the main thread.
+        Geometry::Transformation t(instance->get_transformation());
+        t.set_offset(instance->get_offset().z() * Vec3d::UnitZ());
+        Vec3d rotation = instance->get_rotation();
+        rotation.z()   = 0.;
+        t.set_rotation(rotation);
+        std::vector<FootprintPart> parts;
+        for (const ModelVolume *volume : instance->get_object()->volumes)
+            if (volume->is_model_part())
+                parts.push_back({volume->mesh_ptr(), t.get_matrix() * volume->get_matrix()});
+        polygon.get_footprint = [parts = std::move(parts)]() { return footprint_of(parts); };
+    }
     if (mapping_plate != nullptr)
         set_arrange_polygon_bed_exclusion_extruders(polygon, *instance->get_object(), *mapping_plate, config);
     return polygon;
@@ -871,6 +943,23 @@ void ArrangeJob::process(Ctl &ctl)
     bedpts = imex.bed_shape();
     imex.add_keep_outs(m_unselected);
 
+    if (params.grid_engine && arrangement::grid_arrange_supports(params, bedpts)) {
+        // The grid arranger arranges the objects by their real outlines.
+        const size_t count = m_selected.size() + m_unselected.size();
+        size_t       done  = 0;
+        for (ArrangePolygons *list : {&m_selected, &m_unselected})
+            for (ArrangePolygon &ap : *list) {
+                if (ctl.was_canceled())
+                    return;
+                if (ap.get_footprint) {
+                    ctl.update_status(int(done * 100 / count), _u8L("Measuring the outlines of the objects"));
+                    ap.footprint = ap.get_footprint();
+                }
+                ++done;
+            }
+    } else if (params.grid_engine)
+        m_classic_fallback = params.is_seq_print ? ClassicFallback::ByObject : ClassicFallback::Belt;
+
     bool   enable_wrapping = global_config.option<ConfigOptionBool>("enable_wrapping_detection")->value;
     partplate_list.preprocess_exclude_areas(params.excluded_regions, global_config, enable_wrapping, 1, scale_(1));
 
@@ -1244,6 +1333,13 @@ void ArrangeJob::finalize(bool canceled, std::exception_ptr &eptr) {
     // BBS
     //wxGetApp().obj_manipul()->set_dirty();
 
+    if (m_classic_fallback != ClassicFallback::None)
+        m_plater->get_notification_manager()->push_notification(NotificationType::BBLPlateInfo,
+            NotificationManager::NotificationLevel::WarningNotificationLevel,
+            m_classic_fallback == ClassicFallback::ByObject ?
+                _u8L("The grid arranger does not support printing by object, so the classic arranger was used.") :
+                _u8L("The grid arranger does not support belt printers, so the classic arranger was used."));
+
     if (!m_left_in_place.empty())
         m_plater->get_notification_manager()->push_notification(NotificationType::BBLPlateInfo,
             NotificationManager::NotificationLevel::WarningNotificationLevel,
@@ -1388,6 +1484,10 @@ arrangement::ArrangeParams init_arrange_params(Plater *p)
     params.is_seq_print                        = settings.is_seq_print;
     params.min_obj_distance                    = scaled(settings.distance);
     params.align_to_y_axis                     = settings.align_to_y_axis;
+    params.grid_engine                         = !settings.classic_engine;
+    params.place_in_holes                      = settings.place_in_holes;
+    if (settings.center_on_plate)
+        params.align_center = Vec2d(0.5, 0.5);
     if (print_config.belt_printer.value) {
         // Parts print in belt order: the belt runs across the gantry's tilt axis, a
         // rotation about X prints toward +Y and one about Y toward -X (see

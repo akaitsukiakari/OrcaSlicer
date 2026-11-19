@@ -1,4 +1,5 @@
 #include "Arrange.hpp"
+#include "GridArrange.hpp"
 #include "ClipperUtils.hpp"
 #include "ExPolygon.hpp"
 #include "Point.hpp"
@@ -1304,6 +1305,10 @@ void arrange(ArrangePolygons &      items,
              const Points &         bed,
              const ArrangeParams &  params)
 {
+    if (params.grid_engine && grid_arrange_supports(params, bed)) {
+        grid_arrange(items, excludes, bed, params);
+        return;
+    }
     call_with_bed(bed, [&](const auto &bin) {
         arrange(items, excludes, bin, params);
     });
