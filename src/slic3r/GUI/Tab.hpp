@@ -333,6 +333,8 @@ public:
     MultiSwitchButton *  m_variant_combo   = nullptr;
     ScalableButton *m_extruder_sync   = nullptr;
 	wxPanel *       m_extruder_sync_box  = nullptr;
+    // Orca: "Edit all nozzles": an edit of a per-nozzle setting also goes to the nozzles the copy button copies to.
+    LabeledCheckBox *m_extruder_link  = nullptr;
     // Orca: whether m_extruder_switch switches nozzle variants (it then offers sync between them).
     // The printer tab also enables the switch for printers without variants, to choose the extruder
     // its Extruder and Motion ability pages edit.
@@ -535,6 +537,17 @@ public:
     void        update_extruder_variants(int extruder_id = -1, bool reload = true);
     void        switch_excluder(int extruder_id = -1, bool reload = true);
     void        sync_excluder();
+    // Orca: where the copy button, and "Edit all nozzles", put the values of the switch's selection.
+    struct ExtruderCopyColumns
+    {
+        int              source = 0; // the switch's selection
+        int              stride = 1; // values per column
+        std::vector<int> columns;    // the source and the columns it can copy to, in order
+        // Position of the key's first value in a column, -1 when the column takes no value of it.
+        std::function<int(const std::string &key, int column)> position;
+    };
+    ExtruderCopyColumns extruder_copy_columns();
+    void        link_extruder_edit(const std::string &opt_id);
 	void        parse_extruder_selection(int selection, int &extruder_id, NozzleVolumeType &nozzle_type);
     int         calculate_selection_index_for_extruder(int extruder_id, NozzleVolumeType nozzle_type);
 	std::vector<int> get_extruder_sync_targets(int extruder_id);

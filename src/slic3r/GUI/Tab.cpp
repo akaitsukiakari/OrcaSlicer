@@ -619,6 +619,26 @@ void Tab::create_preset_tab()
         left_sizer->Add(icon               , 0, wxALIGN_CENTER | wxLEFT , m_em_unit);
         right_sizer->Add(m_extruder_sync_box, 0, wxALIGN_CENTER | wxRIGHT, m_em_unit);
 
+        // Orca: "Edit all nozzles", one app setting shared by the process and printer tabs. Object and plate
+        // settings edit their own copies of the process, so they keep editing one nozzle at a time.
+        if (m_type == Preset::TYPE_PRINT || m_type == Preset::TYPE_PRINTER) {
+            m_extruder_link = new LabeledCheckBox(panel, _L("Edit all nozzles"));
+            m_extruder_link->SetFont(Label::Body_11);
+            wxGetApp().UpdateDarkUI(m_extruder_link, false, true);
+            m_extruder_link->SetToolTip(_L("Changes to settings with the per-nozzle icon are also made on every other nozzle "
+                                           "of the same nozzle type (Standard or High Flow). Values that already differ stay "
+                                           "as they are until you change them, or copy them with the button on the right."));
+            m_extruder_link->SetValue(wxGetApp().app_config->get_bool("link_nozzle_settings"));
+            m_extruder_link->Bind(wxEVT_CHECKBOX, [](wxCommandEvent &evt) {
+                const bool link = evt.IsChecked();
+                wxGetApp().app_config->set_bool("link_nozzle_settings", link);
+                for (Tab *tab : wxGetApp().tabs_list)
+                    if (tab->m_extruder_link)
+                        tab->m_extruder_link->SetValue(link);
+            });
+            left_sizer->Add(m_extruder_link, 0, wxALIGN_CENTER | wxLEFT, m_em_unit);
+        }
+
         m_main_sizer->Add(m_variant_sizer, 0, wxEXPAND | wxTOP, m_em_unit);
     } else if (dynamic_cast<TabFilament *>(this)) {
         m_variant_combo = new MultiSwitchButton(panel);
@@ -1851,6 +1871,8 @@ void Tab::msw_rescale()
         m_mode_view->Rescale();
     if (m_extruder_switch)
         m_extruder_switch->Rescale();
+    if (m_extruder_link)
+        m_extruder_link->Rescale();
     if (m_variant_combo)
         m_variant_combo->Rescale();
 
@@ -9483,6 +9505,10 @@ void Tab::update_variant_sizer_visibility()
         m_extruder_sync->Show(show);
         m_extruder_sync->Enable(extruder_sync_enabled());
     }
+    if (m_extruder_link) {
+        m_extruder_link->Show(show);
+        m_extruder_link->Enable(extruder_sync_enabled());
+    }
     GetParent()->Layout();
 }
 
@@ -9500,6 +9526,8 @@ void Tab::switch_excluder(int extruder_id, bool reload)
         extruder_id = 0;
     if (m_extruder_sync)
         m_extruder_sync->Enable(extruder_sync_enabled());
+    if (m_extruder_link)
+        m_extruder_link->Enable(extruder_sync_enabled());
     if (m_extruder_switch) {
         int current_extruder = get_current_active_extruder();
         m_extruder_sync->Show();
@@ -9588,21 +9616,22 @@ void Tab::switch_excluder(int extruder_id, bool reload)
     }
 }
 
-void Tab::sync_excluder()
+Tab::ExtruderCopyColumns Tab::extruder_copy_columns()
 {
-    // Orca: copies the modified values of the switch's selection to the extruders that can take them, or, on the
-    // filament tab, to the filament's other nozzle variants. Each option keeps its values at its own position in every
-    // column: the variant column of the active nozzle, the extruder for per-extruder options of the printer's Extruder
-    // page, the variant for a filament.
+    // Orca: each option keeps its values at its own position in every column: the variant column of the active
+    // nozzle, the extruder for per-extruder options of the printer's Extruder page, the variant for a filament.
+    ExtruderCopyColumns result;
     const bool extruder_page = is_printer_extruder_page(m_active_page);
     // Motion ability options hold a (normal, silent) pair per variant, so switch_excluder indexes that page with stride 2.
-    const int          stride    = m_active_page->title().StartsWith("Motion ability") ? 2 : 1;
+    result.stride = m_active_page->title().StartsWith("Motion ability") ? 2 : 1;
     const Preset::Type base_type = m_type >= Preset::TYPE_COUNT ? Preset::TYPE_PRINT : m_type;
     const auto        *extruders = m_preset_bundle->printers.get_edited_preset().config.option<ConfigOptionEnumsGeneric>("extruder_type");
     const int          source    = m_variant_combo ? std::max(0, m_variant_combo->GetSelection()) : get_current_active_extruder();
     const NozzleVolumeType active_nozzle = m_variant_combo ? NozzleVolumeType::nvtStandard : get_actual_nozzle_volume_type(source);
     const std::vector<int> targets       = m_variant_combo ? std::vector<int>() : get_extruder_sync_targets(source);
-    auto position = [&](const std::string &key, int column) -> int {
+    result.source   = source;
+    result.position = [this, extruder_page, base_type, extruders, source, active_nozzle, targets,
+                       stride = result.stride](const std::string &key, int column) -> int {
         if (m_variant_combo)
             return filament_options_with_variant.count(key) > 0 ? column : -1;
         if (extruder_page && printer_options_with_variant_1.count(key) == 0)
@@ -9616,7 +9645,7 @@ void Tab::sync_excluder()
     };
 
     // Extruders, or a filament's nozzle variants, in order.
-    std::vector<int> columns;
+    std::vector<int> &columns = result.columns;
     if (m_variant_combo) {
         const auto *variants = m_config->option<ConfigOptionStrings>("filament_extruder_variant");
         for (int variant = 0; variants != nullptr && variant < int(variants->size()); ++variant)
@@ -9624,15 +9653,60 @@ void Tab::sync_excluder()
     } else if (extruder_page) {
         for (int extruder = 0; extruder < m_preset_bundle->get_printer_extruder_count(); ++extruder)
             columns.push_back(extruder);
-    } else {
-        if (position("", source) < 0)
-            return;
+    } else if (result.position("", source) >= 0) {
         columns.push_back(source);
         for (int extruder : targets)
-            if (position("", extruder) >= 0)
+            if (result.position("", extruder) >= 0)
                 columns.push_back(extruder);
         std::sort(columns.begin(), columns.end());
     }
+    return result;
+}
+
+void Tab::link_extruder_edit(const std::string &opt_id)
+{
+    if (m_extruder_link == nullptr || !m_extruder_link->GetValue() || m_active_page == nullptr || !variant_switch_active() ||
+        !extruder_sync_enabled())
+        return;
+    const auto n = opt_id.find('#');
+    if (n == std::string::npos)
+        return;
+    const std::string key    = opt_id.substr(0, n);
+    // The Extruder page's per-extruder settings (nozzle diameter, offset, ...) describe the hardware, so they stay as edited.
+    if (is_printer_extruder_page(m_active_page) && printer_options_with_variant_1.count(key) == 0)
+        return;
+    auto             *values = dynamic_cast<ConfigOptionVectorBase *>(m_config->option(key));
+    if (values == nullptr)
+        return;
+    const ExtruderCopyColumns copy = extruder_copy_columns();
+    const int                 from = copy.position(key, copy.source);
+    // Only the fields the switch points at its selection edit one column of many.
+    if (from < 0 || m_active_page->get_field(key, from + 256) == nullptr)
+        return;
+    bool copied = false;
+    for (int column : copy.columns) {
+        const int to = copy.position(key, column);
+        if (column == copy.source || to < 0)
+            continue;
+        for (int s = 0; s < copy.stride; ++s)
+            values->set_at(values, to + s, from + s);
+        copied = true;
+    }
+    if (copied)
+        update_dirty();
+}
+
+void Tab::sync_excluder()
+{
+    // Orca: copies the modified values of the switch's selection to the extruders that can take them, or, on the
+    // filament tab, to the filament's other nozzle variants.
+    const ExtruderCopyColumns copy      = extruder_copy_columns();
+    const int                 stride    = copy.stride;
+    const int                 source    = copy.source;
+    const std::vector<int>   &columns   = copy.columns;
+    const auto               &position  = copy.position;
+    const Preset::Type        base_type = m_type >= Preset::TYPE_COUNT ? Preset::TYPE_PRINT : m_type;
+    const NozzleVolumeType active_nozzle = m_variant_combo ? NozzleVolumeType::nvtStandard : get_actual_nozzle_volume_type(source);
     if (columns.size() < 2)
         return;
 
@@ -10010,6 +10084,8 @@ ConfigOptionsGroupShp Page::new_optgroup(const wxString &title, const wxString &
 //!        wxTheApp->CallAfter([this, opt_key, value]() {
             static_cast<Tab*>(tab)->update_dirty();
             static_cast<Tab*>(tab)->on_value_change(opt_key, value);
+            // Orca: after on_value_change(), which may clamp the value.
+            static_cast<Tab*>(tab)->link_extruder_edit(opt_key);
 //!        });
     };
 
