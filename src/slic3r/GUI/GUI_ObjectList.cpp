@@ -725,13 +725,19 @@ void ObjectList::set_tooltip_for_item(const wxPoint& pt)
         if (node->HasSinking())
             tooltip = _(L("Click the icon to shift this object to the bed"));
     }
-    else if (col->GetModelColumn() == (unsigned int)colName && (pt.x >= 2 * wxGetApp().em_unit() && pt.x <= 4 * wxGetApp().em_unit()))
+    else if (col->GetModelColumn() == (unsigned int)colName)
     {
-        if (const ItemType type = m_objects_model->GetItemType(item);
-            type & (itObject | itVolume)) {
+        const ItemType type = m_objects_model->GetItemType(item);
+        if ((type & (itObject | itVolume)) && pt.x >= 2 * wxGetApp().em_unit() && pt.x <= 4 * wxGetApp().em_unit()) {
             int obj_idx = m_objects_model->GetObjectIdByItem(item);
             int vol_idx = type & itVolume ? m_objects_model->GetVolumeIdByItem(item) : -1;
             tooltip = get_mesh_errors_info(obj_idx, vol_idx).tooltip;
+        }
+        if ((type & itObject) && node->m_model_object != nullptr && node->m_model_object->arrange_lock != ArrangeLock::None) {
+            if (!tooltip.empty())
+                tooltip += "\n";
+            tooltip += node->m_model_object->arrange_lock == ArrangeLock::Position ? _L("Position locked when arranging") :
+                                                                                     _L("Rotation locked when arranging");
         }
     }
 
@@ -7432,6 +7438,11 @@ void ObjectList::toggle_printable_state()
     // update scene
     wxGetApp().plater()->update();
     wxGetApp().plater()->reload_paint_after_background_process_apply();
+}
+
+void ObjectList::update_arrange_lock_icon(int obj_idx)
+{
+    m_objects_model->UpdateArrangeLockIcon(m_objects_model->GetItemById(obj_idx));
 }
 
 void ObjectList::toggle_auto_drop()

@@ -529,6 +529,8 @@ public:
     void        DeleteWarningIcon(const wxDataViewItem& item, const bool unmark_object = false);
     void        UpdateWarningIcon(const wxDataViewItem& item, const std::string& warning_name);
     void        UpdateCutObjectIcon(const wxDataViewItem &item, bool has_cut_icon);
+    // Shows the object's current arrange lock, read from its ModelObject.
+    void        UpdateArrangeLockIcon(const wxDataViewItem &item);
     bool        HasWarningIcon(const wxDataViewItem& item) const;
     t_layer_height_range    GetLayerRangeByItem(const wxDataViewItem& item) const;
 

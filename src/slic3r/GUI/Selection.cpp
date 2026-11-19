@@ -703,8 +703,10 @@ void Selection::set_arrange_lock(ArrangeLock lock)
 
     wxGetApp().plater()->take_snapshot(lock == ArrangeLock::None ? "Unlock Selection for Arrange" : "Lock Selection for Arrange");
     // The lock is shared by all instances of an object.
-    for (const auto& [obj_idx, inst_list] : m_cache.content)
+    for (const auto& [obj_idx, inst_list] : m_cache.content) {
         m_model->objects[obj_idx]->arrange_lock = lock;
+        wxGetApp().obj_list()->update_arrange_lock_icon(obj_idx);
+    }
 }
 
 void Selection::add_all()

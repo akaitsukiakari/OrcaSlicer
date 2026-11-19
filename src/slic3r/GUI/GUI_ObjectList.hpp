@@ -494,6 +494,7 @@ public:
     void update_printable_state(int obj_idx, int instance_idx);
     void toggle_printable_state();
     void toggle_auto_drop();
+    void update_arrange_lock_icon(int obj_idx);
     void enable_layers_editing();
 
     //BBS: remove const qualifier
