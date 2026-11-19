@@ -109,12 +109,25 @@ has a checkbox, ticked by default. A cell without a value of that setting stays
 empty. Tick-all boxes cover each row, group, category and column, and one covers
 everything. Only the ticked values are written.
 
+## Editing all nozzles at once
+
+"Edit all nozzles", next to the per-nozzle icon of the process and printer
+tabs, makes an edit reach the other nozzles as it is made. One app setting,
+`link_nozzle_settings`, drives the box on both tabs and is off by default. With
+it on, an edited per-nozzle value is written to the columns the copy button
+would copy it to, so the same nozzle type rule applies. The printer's
+per-extruder settings, such as the nozzle diameter, describe the hardware and
+stay per extruder. Values that differ when the box is ticked are left alone:
+the copy button brings them in line. Object and plate settings, which edit
+their own copies of the process, and the filament tab, whose columns are
+nozzle types, have no such box.
+
 ## Implementation and verification
 
 The column handling lives in `PrintConfig.cpp` (`get_index_for_extruder`,
 `update_values_to_printer_extruders`, `set_num_extruders`) and `Preset.cpp`
 (`extend_default_config_length`). `add_process_columns_for_new_tools` is in
-`ParameterUtils.cpp`. The switches, the copy button and the in-memory
+`ParameterUtils.cpp`. The switches, the copy button, "Edit all nozzles" and the in-memory
 completion are in `Tab.cpp`, the dialog in `UnsavedChangesDialog.cpp`.
 
 `tests/libslic3r/test_parameter_utils.cpp` covers the columns added for new
