@@ -387,6 +387,8 @@ ArrangePolygon ArrangeJob::prepare_arrange_polygon(void *model_instance, const P
     ModelInstance* instance = (ModelInstance*)model_instance;
     const Slic3r::DynamicPrintConfig& config = wxGetApp().preset_bundle->full_config();
     ArrangePolygon polygon = get_instance_arrange_poly(instance, config);
+    // A locked position keeps the rotation too; position-locked items are fixed anyway.
+    polygon.keep_rotation = instance->get_object()->arrange_lock != ArrangeLock::None;
     if (params.grid_engine) {
         // The parts in the frame of polygon.poly: the instance without its Z rotation and X and Y offset,
         // as ModelInstance::get_arrange_polygon() takes it. The meshes are shared, so the footprint can
@@ -524,12 +526,19 @@ void ArrangeJob::prepare_all() {
             ArrangePolygon&& ap = prepare_arrange_polygon(mo->instances[i]);
             set_arrange_polygon_bed_exclusion_extruders_for_all_plates(
                 ap, *mo, plate_list, wxGetApp().preset_bundle->full_config());
+            // A position-locked instance stays where it is: other items keep clear of it when it is
+            // printable, and an unprintable one is just left alone.
+            const bool keep_position = mo->arrange_lock == ArrangeLock::Position;
             //BBS: partplate_list preprocess
             //remove the locked plate's instances, neither in selected, nor in un-selected
-            bool locked = plate_list.preprocess_arrange_polygon(oidx, i, ap, true);
-            if (!locked)
+            bool locked = plate_list.preprocess_arrange_polygon(oidx, i, ap, !keep_position);
+            if (!locked && keep_position && !mi->printable) {
+                ap.itemid = m_locked.size();
+                m_locked.emplace_back(std::move(ap));
+            }
+            else if (!locked)
             {
-                ArrangePolygons& cont = mo->instances[i]->printable ? m_selected :m_unprintable;
+                ArrangePolygons& cont = keep_position ? m_unselected : mi->printable ? m_selected : m_unprintable;
 
                 ap.itemid = cont.size();
                 if (&cont == &m_selected) {
@@ -741,7 +750,24 @@ void ArrangeJob::prepare_partplate() {
                 (in_plate ? m_selected : m_unselected) :
                 m_unprintable;
             bool locked = plate_list.preprocess_arrange_polygon_other_locked(oidx, inst_idx, ap, in_plate);
-            if (!locked)
+            if (in_plate && mo->arrange_lock == ArrangeLock::Position) {
+                if (mo->instances[inst_idx]->printable) {
+                    // Fixed on the plate's bed 0, in the plate's frame as preprocess_arrange_polygon()
+                    // puts fixed items; finalize() maps it back to the plate.
+                    const int row = current_plate_index / plate_list.get_plate_cols(), col = current_plate_index % plate_list.get_plate_cols();
+                    ap.translation(X) -= scaled<double>(plate_list.plate_stride_x() * col);
+                    ap.translation(Y) += scaled<double>(plate_list.plate_stride_y() * row);
+                    ap.bed_idx = 0;
+                    ap.itemid  = m_unselected.size();
+                    m_unselected.emplace_back(std::move(ap));
+                } else {
+                    // Left where it is, as the instances on other plates are.
+                    ap.bed_idx = arrangement::UNARRANGED;
+                    ap.itemid  = m_locked.size();
+                    m_locked.emplace_back(std::move(ap));
+                }
+            }
+            else if (!locked)
             {
                 ap.itemid = cont.size();
                 cont.emplace_back(std::move(ap));
@@ -1279,6 +1305,9 @@ void ArrangeJob::finalize(bool canceled, std::exception_ptr &eptr) {
         //BBS: partplate postprocess
         if (!only_on_partplate)
             plate_list.postprocess_bed_index_for_unselected(ap);
+        else
+            // Only position-locked objects of the plate are fixed here, on its bed 0.
+            plate_list.postprocess_bed_index_for_current_plate(ap);
 
         beds = std::max(ap.bed_idx, beds);
         BOOST_LOG_TRIVIAL(debug) << __FUNCTION__ << boost::format(":arrange unselected %4%: bed_id %1%, trans {%2%,%3%}") % ap.bed_idx % unscale<double>(ap.translation(X)) % unscale<double>(ap.translation(Y)) % ap.name;

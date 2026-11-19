@@ -648,6 +648,54 @@ TEST_CASE("A single imported object retains hidden named bodies through cloning 
     CHECK(restored.objects.front()->volumes[1]->name == "SecondBody");
 }
 
+TEST_CASE("An object's arrange lock survives cloning and a project round trip", "[3mf]")
+{
+    const auto [lock, value] = GENERATE(table<ArrangeLock, std::string>({{ArrangeLock::None, ""},
+                                                                         {ArrangeLock::Rotation, "rotation"},
+                                                                         {ArrangeLock::Position, "position"}}));
+    ScopedSlic3rTemporaryDir temporary_dir("orca_arrange_lock");
+    ScopedTemporaryDir backup_dir("orca_arrange_lock_reload");
+    ScopedTemporaryFile file(".3mf");
+    Model source;
+    ModelObject *object = source.add_object();
+    object->add_volume(make_cube(10., 10., 10.));
+    object->add_instance();
+    object->arrange_lock = lock;
+
+    Model cloned(source);
+    CHECK(cloned.objects.front()->arrange_lock == lock);
+    store_project(cloned, file.string(), SaveStrategy::Zip64 | SaveStrategy::Silence);
+    std::string stored;
+    rewrite_3mf_entries(file.string(), [&](std::string &name, std::string &data) {
+        if (boost::algorithm::ends_with(name, "model_settings.config")) {
+            const size_t pos = data.find("orca:arrange_lock");
+            if (pos != std::string::npos) {
+                const size_t start = data.find("value=\"", pos) + 7;
+                stored             = data.substr(start, data.find('"', start) - start);
+            }
+        }
+        return false;
+    });
+    CHECK(stored == value);
+
+    Model restored;
+    REQUIRE(load_project(file.string(), restored, backup_dir));
+    REQUIRE(restored.objects.size() == 1);
+    CHECK(restored.objects.front()->arrange_lock == lock);
+    CHECK_FALSE(restored.objects.front()->config.has("orca:arrange_lock"));
+}
+
+TEST_CASE("A slicer that does not know the arrange lock skips it as an unknown object setting", "[3mf]")
+{
+    // Without its own handling of the key, the 3MF loader hands object metadata to the object's
+    // config, as stock OrcaSlicer does; the key must be dropped there, not fail the load.
+    ModelConfig               config;
+    ConfigSubstitutionContext ctxt{ForwardCompatibilitySubstitutionRule::Enable};
+    REQUIRE_NOTHROW(config.set_deserialize("orca:arrange_lock", "position", ctxt));
+    CHECK_FALSE(config.has("orca:arrange_lock"));
+    CHECK(std::find(ctxt.unrecogized_keys.begin(), ctxt.unrecogized_keys.end(), "orca:arrange_lock") != ctxt.unrecogized_keys.end());
+}
+
 TEST_CASE("A plate's G-code statistics are stored next to its G-code", "[3mf]")
 {
     const bool with_statistics = GENERATE(false, true);

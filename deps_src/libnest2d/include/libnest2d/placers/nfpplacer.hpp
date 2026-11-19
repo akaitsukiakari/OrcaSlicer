@@ -754,13 +754,16 @@ private:
             return 1;
         };
 
+        static const std::vector<Radians> own_rotation{0.};
+        const std::vector<Radians> &rotations = item.keep_rotation ? own_rotation : config_.rotations;
+
         if (first_object) {
             setInitialPosition(item);
             auto best_tr = item.translation();
             auto best_rot = item.rotation();
             best_overfit = overfit(item.transformedShape(), bin_) + overlapWithVirtObject();
 
-            for(auto rot : config_.rotations) {
+            for(auto rot : rotations) {
                 item.translation(initial_tr);
                 item.rotation(initial_rot + rot);
                 setInitialPosition(item);
@@ -782,7 +785,7 @@ private:
 
             Pile merged_pile = merged_pile_;
 
-            for(auto rot : config_.rotations) {
+            for(auto rot : rotations) {
 
                 item.translation(initial_tr);
                 item.rotation(initial_rot + rot);

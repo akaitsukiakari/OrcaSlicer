@@ -209,6 +209,7 @@ private:
     void        append_menu_item_change_filament(wxMenu* menu, size_t pos = -1);
     void        append_menu_item_set_printable(wxMenu* menu);
     void        append_menu_item_set_auto_drop(wxMenu* menu);
+    void        append_menu_items_arrange_lock(wxMenu* menu);
     void        append_menu_item_locked(wxMenu* menu, size_t pos = -1);
     void        append_menu_item_fill_bed(wxMenu *menu);
     void        append_menu_item_plate_name(wxMenu *menu, size_t pos = -1);

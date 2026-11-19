@@ -248,3 +248,24 @@ TEST_CASE("The grid arranger leaves sequential printing and belt printers to the
     params.is_belt      = true;
     CHECK_FALSE(grid_arrange_supports(params, bed(200, 200)));
 }
+
+TEST_CASE("The grid arranger keeps an item's rotation when told to, even with rotations allowed", "[GridArrange]")
+{
+    // A long bar along Y on a bed that is wide but short: it fits only turned a quarter.
+    const auto arranged = [](bool keep_rotation) {
+        ArrangePolygons items{item(rectangle(10, 150))};
+        items[0].keep_rotation = keep_rotation;
+        ArrangeParams params   = grid_params();
+        params.allow_rotations = true;
+        arrange(items, {}, bed(200, 100), params);
+        return items[0];
+    };
+
+    const ArrangePolygon turned = arranged(false);
+    REQUIRE(turned.bed_idx == 0);
+    CHECK_THAT(std::abs(std::sin(turned.rotation)), WithinAbs(1., 1e-6));
+
+    const ArrangePolygon kept = arranged(true);
+    CHECK(kept.bed_idx == UNARRANGED);
+    CHECK_THAT(kept.rotation, WithinAbs(0., 1e-9));
+}

@@ -254,6 +254,8 @@ void update_selected_items_axis_align(ArrangePolygons& selected, const DynamicPr
         return;
 
     for (ArrangePolygon& ap : selected) {
+        if (ap.keep_rotation)
+            continue;
         bool   validResult = false;
         double angle = 0.0;
         {
@@ -1179,6 +1181,8 @@ void _arrange(
     // polygon nesting, a convex hull needs to be calculated.
     if (params.allow_rotations) {
         for (auto &itm : shapes) {
+            if (itm.keep_rotation)
+                continue;
             itm.rotation(min_area_boundingbox_rotation(itm.transformedShape()));
 
             // If the item is too big, try to find a rotation that makes it fit
@@ -1272,6 +1276,7 @@ static void process_arrangeable(const ArrangePolygon &arrpoly,
     //BBS: add virtual object logic
     item.is_virt_object = arrpoly.is_virt_object;
     item.is_wipe_tower = arrpoly.is_wipe_tower;
+    item.keep_rotation = arrpoly.keep_rotation;
     item.bed_temp = arrpoly.first_bed_temp;
     item.print_temp = arrpoly.print_temp;
     item.vitrify_temp = arrpoly.vitrify_temp;

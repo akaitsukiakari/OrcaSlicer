@@ -386,7 +386,7 @@ void grid_arrange(ArrangePolygons &items, const ArrangePolygons &fixed, const Po
         // The rotations to try: the item's own, or with rotations allowed, the four that square
         // its narrowest bounding box with the bed.
         std::vector<double> rotations{ap.rotation};
-        if (params.allow_rotations) {
+        if (params.allow_rotations && !ap.keep_rotation) {
             const double base = MinAreaBoundigBox(ap.poly.contour, MinAreaBoundigBox::pcConvex).angle_to_X();
             rotations = {base, base + PI / 2, base + PI, base + 3 * PI / 2};
         }

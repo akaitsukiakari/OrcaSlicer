@@ -103,6 +103,8 @@ struct ArrangePolygon {
     // If empty, any rotation is allowed (currently unsupported)
     // If only a zero is there, no rotation is allowed
     std::vector<double> allowed_rotations = {0.};
+    // The arranger keeps the item at its rotation even when rotations are allowed.
+    bool keep_rotation = false;
 
     /// Optional setter function which can store arbitrary data in its closure
     std::function<void(const ArrangePolygon&)> setter = nullptr;

@@ -384,6 +384,10 @@ inline bool is_precise_seam_weak(ModelVolumeType t)   { return t >= ModelVolumeT
 // and possibly having multiple modifier volumes, each modifier volume with its set of parameters and materials.
 // Each ModelObject may be instantiated mutliple times, each instance having different placement on the print bed,
 // different rotation and different uniform scaling.
+// What the arranger must keep of an object's instances: nothing, their rotation, or their
+// position (and so their rotation as well). It is model state, never a print option.
+enum class ArrangeLock : unsigned char { None, Rotation, Position };
+
 class ModelObject final : public ObjectBase
 {
 public:
@@ -412,6 +416,8 @@ public:
     // Single-object import keeps named bodies internally until the user reveals its parts.
     // A stored choice: part settings or painting still show the parts, see hides_imported_parts().
     bool                    imported_parts_hidden { false };
+    // Shared by all instances of the object.
+    ArrangeLock             arrange_lock { ArrangeLock::None };
 
     // This vector holds position of selected support points for SLA. The data are
     // saved in mesh coordinates to allow using them for several instances.
@@ -733,7 +739,7 @@ private:
         Internal::StaticSerializationWrapper<ModelConfigObject const> config_wrapper(config);
         Internal::StaticSerializationWrapper<LayerHeightProfile const> layer_heigth_profile_wrapper(layer_height_profile);
         ar(name, module_name, input_file, instances, volumes, config_wrapper, layer_config_ranges, layer_heigth_profile_wrapper,
-            sla_support_points, sla_points_status, sla_drain_holes, printable, auto_drop, imported_parts_hidden, origin_translation, brim_points,
+            sla_support_points, sla_points_status, sla_drain_holes, printable, auto_drop, imported_parts_hidden, arrange_lock, origin_translation, brim_points,
             m_bounding_box_approx, m_bounding_box_approx_valid, 
             m_bounding_box_exact, m_bounding_box_exact_valid, m_min_max_z_valid,
             m_raw_bounding_box, m_raw_bounding_box_valid, m_raw_mesh_bounding_box, m_raw_mesh_bounding_box_valid,
@@ -746,7 +752,7 @@ private:
         // BBS: add backup, check modify
         SaveObjectGaurd gaurd(*this);
         ar(name, module_name, input_file, instances, volumes, config_wrapper, layer_config_ranges, layer_heigth_profile_wrapper,
-            sla_support_points, sla_points_status, sla_drain_holes, printable, auto_drop, imported_parts_hidden, origin_translation, brim_points,
+            sla_support_points, sla_points_status, sla_drain_holes, printable, auto_drop, imported_parts_hidden, arrange_lock, origin_translation, brim_points,
             m_bounding_box_approx, m_bounding_box_approx_valid, 
             m_bounding_box_exact, m_bounding_box_exact_valid, m_min_max_z_valid,
             m_raw_bounding_box, m_raw_bounding_box_valid, m_raw_mesh_bounding_box, m_raw_mesh_bounding_box_valid,

@@ -92,6 +92,8 @@ public:
     bool is_virt_object{ false };
     bool is_wipe_tower{ false };
     bool has_tried_with_excluded{ false };
+    // The placer tries no other rotation than the item's own.
+    bool keep_rotation{ false };
 
     /// The type of the shape which was handed over as the template argument.
     using ShapeType = RawShape;

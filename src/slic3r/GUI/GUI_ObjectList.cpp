@@ -3391,6 +3391,7 @@ void ObjectList::merge(bool to_multipart_object)
             if (object->auto_drop == false) {
                 new_object->auto_drop = false;
             }
+            new_object->arrange_lock = std::max(new_object->arrange_lock, object->arrange_lock);
 
             // merge layers
             for (const auto& range : object->layer_config_ranges)
