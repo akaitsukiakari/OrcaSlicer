@@ -1359,6 +1359,7 @@ ModelObject& ModelObject::assign_copy(const ModelObject &rhs)
     this->printable                   = rhs.printable;
     this->auto_drop                   = rhs.auto_drop;
     this->imported_parts_hidden       = rhs.imported_parts_hidden;
+    this->arrange_lock                = rhs.arrange_lock;
     this->origin_translation          = rhs.origin_translation;
     this->cut_id.copy(rhs.cut_id);
     this->copy_transformation_caches(rhs);
@@ -1401,6 +1402,7 @@ ModelObject& ModelObject::assign_copy(ModelObject &&rhs)
     this->printable                   = std::move(rhs.printable);
     this->auto_drop                   = rhs.auto_drop;
     this->imported_parts_hidden       = rhs.imported_parts_hidden;
+    this->arrange_lock                = rhs.arrange_lock;
     this->origin_translation          = std::move(rhs.origin_translation);
     this->copy_transformation_caches(rhs);
 

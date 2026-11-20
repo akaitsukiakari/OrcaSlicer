@@ -64,6 +64,8 @@ static constexpr char LayerIcon[]       = "height_range_layer";
 static constexpr char WarningIcon[]     = "obj_warning";
 static constexpr char WarningManifoldIcon[] = "obj_warning";
 static constexpr char LockIcon[]            = "cut_";
+static constexpr char ArrangePositionLockIcon[] = "lock_closed";
+static constexpr char ArrangeRotationLockIcon[] = "arrange_lock_rotation";
 
 // Volumes printed with a filament of their own choice.
 static bool volume_shows_extruder(Slic3r::ModelVolumeType type)
@@ -578,7 +580,13 @@ void ObjectDataViewModel::UpdateBitmapForNode(ObjectDataViewModelNode *node)
     // Extended range to include Precise Seam modifier types
     is_volume_node &= (vol_type >= int(ModelVolumeType::MODEL_PART) && vol_type <= int(ModelVolumeType::PAINTED_MODIFIER));
 
-    if (!node->has_warning_icon() && !node->has_lock()) {
+    // An object's arrange lock, shown after its other icons.
+    const ArrangeLock arrange_lock = (node->GetType() & itObject) && node->m_model_object != nullptr ? node->m_model_object->arrange_lock :
+                                                                                                      ArrangeLock::None;
+    const char *arrange_lock_icon = arrange_lock == ArrangeLock::Position ? ArrangePositionLockIcon :
+                                    arrange_lock == ArrangeLock::Rotation ? ArrangeRotationLockIcon : nullptr;
+
+    if (!node->has_warning_icon() && !node->has_lock() && arrange_lock_icon == nullptr) {
         node->SetBitmap(is_volume_node ? (
             node->is_text_volume() ? m_text_volume_bmps.at(vol_type) : 
             node->is_svg_volume() ? m_svg_volume_bmps.at(vol_type) : 
@@ -593,6 +601,8 @@ void ObjectDataViewModel::UpdateBitmapForNode(ObjectDataViewModelNode *node)
         scaled_bitmap_name += LockIcon;
     if (is_volume_node)
         scaled_bitmap_name += std::to_string(vol_type);
+    if (arrange_lock_icon != nullptr)
+        scaled_bitmap_name += arrange_lock_icon;
     scaled_bitmap_name += (wxGetApp().dark_mode() ? "-dm" : "-lm");
 
     wxBitmap* bmp = m_bitmap_cache->find(scaled_bitmap_name);
@@ -612,6 +622,11 @@ void ObjectDataViewModel::UpdateBitmapForNode(ObjectDataViewModelNode *node)
                 node->is_text_volume() ? m_text_volume_bmps[vol_type] :
                 node->is_svg_volume() ? m_svg_volume_bmps[vol_type] : 
                 m_volume_bmps[vol_type]);
+        }
+        if (arrange_lock_icon != nullptr) {
+            if (!bmps.empty()) // ORCA: Add spacing between icons if there are multiple
+                bmps.emplace_back(create_scaled_bitmap("dot", nullptr, int(wxGetApp().em_unit() / 10) * 4));
+            bmps.emplace_back(create_scaled_bitmap(arrange_lock_icon));
         }
         bmp = m_bitmap_cache->insert(scaled_bitmap_name, bmps);
     }
@@ -2544,6 +2559,14 @@ void ObjectDataViewModel::UpdateWarningIcon(const wxDataViewItem& item, const st
         DeleteWarningIcon(item, true);
     else
         AddWarningIcon(item, warning_icon_name);
+}
+
+void ObjectDataViewModel::UpdateArrangeLockIcon(const wxDataViewItem &item)
+{
+    if (!item.IsOk())
+        return;
+    UpdateBitmapForNode(static_cast<ObjectDataViewModelNode*>(item.GetID()));
+    ItemChanged(item);
 }
 
 void ObjectDataViewModel::UpdateCutObjectIcon(const wxDataViewItem &item, bool has_lock)

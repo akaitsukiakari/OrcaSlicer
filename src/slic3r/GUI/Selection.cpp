@@ -685,6 +685,30 @@ void Selection::set_auto_drop(bool enabled)
     wxGetApp().plater()->update();
 }
 
+ArrangeLock Selection::get_arrange_lock() const
+{
+    if (!m_valid || is_wipe_tower() || m_cache.content.empty())
+        return ArrangeLock::None;
+
+    ArrangeLock lock = ArrangeLock::Position;
+    for (const auto& [obj_idx, inst_list] : m_cache.content)
+        lock = std::min(lock, m_model->objects[obj_idx]->arrange_lock);
+    return lock;
+}
+
+void Selection::set_arrange_lock(ArrangeLock lock)
+{
+    if (!m_valid || is_wipe_tower())
+        return;
+
+    wxGetApp().plater()->take_snapshot(lock == ArrangeLock::None ? "Unlock Selection for Arrange" : "Lock Selection for Arrange");
+    // The lock is shared by all instances of an object.
+    for (const auto& [obj_idx, inst_list] : m_cache.content) {
+        m_model->objects[obj_idx]->arrange_lock = lock;
+        wxGetApp().obj_list()->update_arrange_lock_icon(obj_idx);
+    }
+}
+
 void Selection::add_all()
 {
     if (!m_valid)

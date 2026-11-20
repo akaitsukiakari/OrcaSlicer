@@ -51,6 +51,11 @@
 #include <tuple>
 #include "libslic3r/ClipperUtils.hpp"
 #include "libslic3r/GCode/WipeTowerEstimate.hpp"
+#include "libslic3r/GridArrange.hpp"
+#include "libslic3r/TriangleMesh.hpp"
+#include "libslic3r/TriangleMeshSlicer.hpp"
+#include <memory>
+#include <mutex>
 
 #define SAVE_ARRANGE_POLY 0
 
@@ -251,6 +256,7 @@ void ArrangeJob::clear_input()
     m_selected_object.clear();
     m_selected_print_time.clear();
     m_left_in_place.clear();
+    m_classic_fallback = ClassicFallback::None;
     m_selected.reserve(count + 1 /* for optional wti */);
     m_unselected.reserve(count + 1 /* for optional wti */);
     m_unprintable.reserve(cunprint /* for optional wti */);
@@ -325,11 +331,79 @@ std::optional<double> sliced_print_time(const ModelInstance &instance)
     return it->second.seconds;
 }
 
+namespace {
+struct FootprintPart
+{
+    std::shared_ptr<const TriangleMesh> mesh;
+    Transform3d                         trafo;
+};
+
+// Footprints worked out before, by their parts: projecting a large mesh takes a while.
+struct CachedFootprint
+{
+    std::vector<std::pair<std::weak_ptr<const TriangleMesh>, Transform3d>> parts;
+    ExPolygons                                                             footprint;
+};
+std::mutex                  footprint_cache_mutex;
+std::vector<CachedFootprint> footprint_cache;
+
+ExPolygons footprint_of(const std::vector<FootprintPart> &parts)
+{
+    const auto matches = [&parts](const CachedFootprint &cached) {
+        if (cached.parts.size() != parts.size())
+            return false;
+        for (size_t i = 0; i < parts.size(); ++i)
+            if (cached.parts[i].first.lock() != parts[i].mesh || !cached.parts[i].second.isApprox(parts[i].trafo))
+                return false;
+        return true;
+    };
+    {
+        std::lock_guard<std::mutex> lock(footprint_cache_mutex);
+        footprint_cache.erase(std::remove_if(footprint_cache.begin(), footprint_cache.end(), [](const CachedFootprint &cached) {
+            return std::any_of(cached.parts.begin(), cached.parts.end(), [](const auto &part) { return part.first.expired(); });
+        }), footprint_cache.end());
+        if (const auto it = std::find_if(footprint_cache.begin(), footprint_cache.end(), matches); it != footprint_cache.end())
+            return it->footprint;
+    }
+
+    Polygons projection;
+    for (const FootprintPart &part : parts)
+        append(projection, project_mesh(part.mesh->its, part.trafo, []() {}));
+    // Grown by the simplification's tolerance first, so the simplified outline still covers the projection.
+    const double tolerance = scaled(0.05);
+    const ExPolygons footprint = expolygons_simplify(offset_ex(union_ex(projection), float(tolerance)), tolerance);
+
+    std::lock_guard<std::mutex> lock(footprint_cache_mutex);
+    CachedFootprint cached{{}, footprint};
+    for (const FootprintPart &part : parts)
+        cached.parts.emplace_back(part.mesh, part.trafo);
+    footprint_cache.push_back(std::move(cached));
+    return footprint;
+}
+} // namespace
+
 ArrangePolygon ArrangeJob::prepare_arrange_polygon(void *model_instance, const PartPlate *mapping_plate)
 {
     ModelInstance* instance = (ModelInstance*)model_instance;
     const Slic3r::DynamicPrintConfig& config = wxGetApp().preset_bundle->full_config();
     ArrangePolygon polygon = get_instance_arrange_poly(instance, config);
+    // A locked position keeps the rotation too; position-locked items are fixed anyway.
+    polygon.keep_rotation = instance->get_object()->arrange_lock != ArrangeLock::None;
+    if (params.grid_engine) {
+        // The parts in the frame of polygon.poly: the instance without its Z rotation and X and Y offset,
+        // as ModelInstance::get_arrange_polygon() takes it. The meshes are shared, so the footprint can
+        // be worked out off the main thread.
+        Geometry::Transformation t(instance->get_transformation());
+        t.set_offset(instance->get_offset().z() * Vec3d::UnitZ());
+        Vec3d rotation = instance->get_rotation();
+        rotation.z()   = 0.;
+        t.set_rotation(rotation);
+        std::vector<FootprintPart> parts;
+        for (const ModelVolume *volume : instance->get_object()->volumes)
+            if (volume->is_model_part())
+                parts.push_back({volume->mesh_ptr(), t.get_matrix() * volume->get_matrix()});
+        polygon.get_footprint = [parts = std::move(parts)]() { return footprint_of(parts); };
+    }
     if (mapping_plate != nullptr)
         set_arrange_polygon_bed_exclusion_extruders(polygon, *instance->get_object(), *mapping_plate, config);
     return polygon;
@@ -452,12 +526,19 @@ void ArrangeJob::prepare_all() {
             ArrangePolygon&& ap = prepare_arrange_polygon(mo->instances[i]);
             set_arrange_polygon_bed_exclusion_extruders_for_all_plates(
                 ap, *mo, plate_list, wxGetApp().preset_bundle->full_config());
+            // A position-locked instance stays where it is: other items keep clear of it when it is
+            // printable, and an unprintable one is just left alone.
+            const bool keep_position = mo->arrange_lock == ArrangeLock::Position;
             //BBS: partplate_list preprocess
             //remove the locked plate's instances, neither in selected, nor in un-selected
-            bool locked = plate_list.preprocess_arrange_polygon(oidx, i, ap, true);
-            if (!locked)
+            bool locked = plate_list.preprocess_arrange_polygon(oidx, i, ap, !keep_position);
+            if (!locked && keep_position && !mi->printable) {
+                ap.itemid = m_locked.size();
+                m_locked.emplace_back(std::move(ap));
+            }
+            else if (!locked)
             {
-                ArrangePolygons& cont = mo->instances[i]->printable ? m_selected :m_unprintable;
+                ArrangePolygons& cont = keep_position ? m_unselected : mi->printable ? m_selected : m_unprintable;
 
                 ap.itemid = cont.size();
                 if (&cont == &m_selected) {
@@ -669,7 +750,24 @@ void ArrangeJob::prepare_partplate() {
                 (in_plate ? m_selected : m_unselected) :
                 m_unprintable;
             bool locked = plate_list.preprocess_arrange_polygon_other_locked(oidx, inst_idx, ap, in_plate);
-            if (!locked)
+            if (in_plate && mo->arrange_lock == ArrangeLock::Position) {
+                if (mo->instances[inst_idx]->printable) {
+                    // Fixed on the plate's bed 0, in the plate's frame as preprocess_arrange_polygon()
+                    // puts fixed items; finalize() maps it back to the plate.
+                    const int row = current_plate_index / plate_list.get_plate_cols(), col = current_plate_index % plate_list.get_plate_cols();
+                    ap.translation(X) -= scaled<double>(plate_list.plate_stride_x() * col);
+                    ap.translation(Y) += scaled<double>(plate_list.plate_stride_y() * row);
+                    ap.bed_idx = 0;
+                    ap.itemid  = m_unselected.size();
+                    m_unselected.emplace_back(std::move(ap));
+                } else {
+                    // Left where it is, as the instances on other plates are.
+                    ap.bed_idx = arrangement::UNARRANGED;
+                    ap.itemid  = m_locked.size();
+                    m_locked.emplace_back(std::move(ap));
+                }
+            }
+            else if (!locked)
             {
                 ap.itemid = cont.size();
                 cont.emplace_back(std::move(ap));
@@ -871,6 +969,23 @@ void ArrangeJob::process(Ctl &ctl)
     bedpts = imex.bed_shape();
     imex.add_keep_outs(m_unselected);
 
+    if (params.grid_engine && arrangement::grid_arrange_supports(params, bedpts)) {
+        // The grid arranger arranges the objects by their real outlines.
+        const size_t count = m_selected.size() + m_unselected.size();
+        size_t       done  = 0;
+        for (ArrangePolygons *list : {&m_selected, &m_unselected})
+            for (ArrangePolygon &ap : *list) {
+                if (ctl.was_canceled())
+                    return;
+                if (ap.get_footprint) {
+                    ctl.update_status(int(done * 100 / count), _u8L("Measuring the outlines of the objects"));
+                    ap.footprint = ap.get_footprint();
+                }
+                ++done;
+            }
+    } else if (params.grid_engine)
+        m_classic_fallback = params.is_seq_print ? ClassicFallback::ByObject : ClassicFallback::Belt;
+
     bool   enable_wrapping = global_config.option<ConfigOptionBool>("enable_wrapping_detection")->value;
     partplate_list.preprocess_exclude_areas(params.excluded_regions, global_config, enable_wrapping, 1, scale_(1));
 
@@ -907,13 +1022,8 @@ void ArrangeJob::process(Ctl &ctl)
         arrange_keeping_on_plate(arrange);
     else if (!only_on_partplate && m_mode == int(Mode::FewestPlates))
         arrange_fewest_plates(arrange);
-    else if (!only_on_partplate && m_mode == int(Mode::LongestPlates)) {
-        // Fill each plate before the next, longest prints first.
-        arrangement::ArrangeParams p = params;
-        p.first_fit = true;
-        order_items(m_selected, [this](const ArrangePolygon &ap) { return m_selected_print_time[ap.itemid]; });
-        arrange(m_selected, m_unselected, p);
-    }
+    else if (!only_on_partplate && m_mode == int(Mode::LongestPlates))
+        arrange_most_time_per_plate(arrange);
     else if (!only_on_partplate && m_mode == int(Mode::OnePerPlate))
         arrange_one_object_per_plate(arrange);
     else
@@ -983,6 +1093,8 @@ void ArrangeJob::arrange_keeping_on_plate(const Arranger &arrange)
 
 // The arranger already opens a plate only for an item no plate has room for, so fewer
 // plates come from a better packing order: try a few and keep the one using fewest plates.
+// Each order runs twice: once as the arranger picks a plate, which is the plate whose spot
+// scores best and so is often the emptier one, and once filling each plate before the next.
 void ArrangeJob::arrange_fewest_plates(const Arranger &arrange)
 {
     const std::vector<std::function<double(const ArrangePolygon &)>> orders = { nullptr, item_area, item_longest_side };
@@ -998,17 +1110,87 @@ void ArrangeJob::arrange_fewest_plates(const Arranger &arrange)
     };
 
     ArrangePolygons best;
-    for (const auto &key : orders) {
-        ArrangePolygons items = m_selected;
-        if (key)
-            order_items(items, key);
-        arrange(items, m_unselected, params);
-        if (params.stopcondition())
-            return;
-        if (best.empty() || cost(items) < cost(best))
-            best = std::move(items);
-    }
+    for (const bool first_fit : { false, true })
+        for (const auto &key : orders) {
+            arrangement::ArrangeParams p = params;
+            p.first_fit = first_fit;
+            ArrangePolygons items = m_selected;
+            if (key)
+                order_items(items, key);
+            arrange(items, m_unselected, p);
+            if (params.stopcondition())
+                return;
+            if (best.empty() || cost(items) < cost(best))
+                best = std::move(items);
+        }
     m_selected = std::move(best);
+}
+
+// Fills the plates one at a time, each with as much print time as fits on it: packing a
+// plate is a knapsack of the remaining objects' times, so try a few orders and keep the one
+// that puts the most time on it. Packed objects stay where they are as fixed items while the
+// next plate is packed, so a later, smaller object can still take a gap on an earlier plate.
+void ArrangeJob::arrange_most_time_per_plate(const Arranger &arrange)
+{
+    arrangement::ArrangeParams p = params;
+    p.first_fit = true; // an object takes the first plate with room, not the emptiest
+
+    // Until it is arranged, an item's itemid is its index in m_selected.
+    const auto time = [this](const ArrangePolygon &ap) { return m_selected_print_time[ap.itemid]; };
+    const std::vector<std::function<double(const ArrangePolygon &)>> orders = {
+        time,
+        [&](const ArrangePolygon &ap) { return time(ap) / std::max(item_area(ap), 1.); },
+        item_area,
+    };
+
+    std::vector<size_t> left(m_selected.size());
+    std::iota(left.begin(), left.end(), 0);
+    ArrangePolygons fixed = m_unselected;
+    for (int plate = 0; !left.empty(); ++plate) {
+        const auto on_plate = [plate](const ArrangePolygon &ap) { return ap.bed_idx >= 0 && ap.bed_idx <= plate; };
+        ArrangePolygons best;
+        double          best_time = -1.;
+        for (const auto &key : orders) {
+            ArrangePolygons items;
+            for (size_t i : left)
+                items.push_back(m_selected[i]);
+            order_items(items, key);
+            arrange(items, fixed, p);
+            if (params.stopcondition())
+                return;
+            double placed_time = 0.;
+            size_t placed      = 0;
+            for (size_t k = 0; k < items.size(); ++k)
+                if (on_plate(items[k])) {
+                    placed_time += time(m_selected[left[k]]);
+                    ++placed;
+                }
+            if (placed_time > best_time) {
+                best_time = placed_time;
+                best      = std::move(items);
+            }
+            if (placed == left.size())
+                break; // everything fits, no order can do better
+        }
+
+        // Keep what landed on this plate or in a gap of an earlier one, and pack the rest again.
+        // When nothing fits even this plate, more plates will not help: take the packing as it is.
+        const bool take_all = plate + 1 >= MAX_NUM_PLATES || std::none_of(best.begin(), best.end(), on_plate);
+        std::vector<size_t> next;
+        for (size_t k = 0; k < best.size(); ++k) {
+            const size_t i = left[k];
+            if (take_all || on_plate(best[k])) {
+                const int itemid = m_selected[i].itemid;
+                m_selected[i]        = best[k];
+                m_selected[i].itemid = itemid; // the arranger renumbers it in packing order
+                fixed.push_back(m_selected[i]);
+            } else
+                next.push_back(i);
+        }
+        if (take_all)
+            break;
+        left = std::move(next);
+    }
 }
 
 // Arranges each object, with all its instances, alone on the next plate. An object whose
@@ -1123,6 +1305,9 @@ void ArrangeJob::finalize(bool canceled, std::exception_ptr &eptr) {
         //BBS: partplate postprocess
         if (!only_on_partplate)
             plate_list.postprocess_bed_index_for_unselected(ap);
+        else
+            // Only position-locked objects of the plate are fixed here, on its bed 0.
+            plate_list.postprocess_bed_index_for_current_plate(ap);
 
         beds = std::max(ap.bed_idx, beds);
         BOOST_LOG_TRIVIAL(debug) << __FUNCTION__ << boost::format(":arrange unselected %4%: bed_id %1%, trans {%2%,%3%}") % ap.bed_idx % unscale<double>(ap.translation(X)) % unscale<double>(ap.translation(Y)) % ap.name;
@@ -1176,6 +1361,13 @@ void ArrangeJob::finalize(bool canceled, std::exception_ptr &eptr) {
     m_plater->update();
     // BBS
     //wxGetApp().obj_manipul()->set_dirty();
+
+    if (m_classic_fallback != ClassicFallback::None)
+        m_plater->get_notification_manager()->push_notification(NotificationType::BBLPlateInfo,
+            NotificationManager::NotificationLevel::WarningNotificationLevel,
+            m_classic_fallback == ClassicFallback::ByObject ?
+                _u8L("The grid arranger does not support printing by object, so the classic arranger was used.") :
+                _u8L("The grid arranger does not support belt printers, so the classic arranger was used."));
 
     if (!m_left_in_place.empty())
         m_plater->get_notification_manager()->push_notification(NotificationType::BBLPlateInfo,
@@ -1321,6 +1513,11 @@ arrangement::ArrangeParams init_arrange_params(Plater *p)
     params.is_seq_print                        = settings.is_seq_print;
     params.min_obj_distance                    = scaled(settings.distance);
     params.align_to_y_axis                     = settings.align_to_y_axis;
+    params.grid_engine                         = !settings.classic_engine;
+    params.place_in_holes                      = settings.place_in_holes;
+    params.group_similar                       = settings.group_similar;
+    if (settings.center_on_plate)
+        params.align_center = Vec2d(0.5, 0.5);
     if (print_config.belt_printer.value) {
         // Parts print in belt order: the belt runs across the gantry's tilt axis, a
         // rotation about X prints toward +Y and one about Y toward -X (see

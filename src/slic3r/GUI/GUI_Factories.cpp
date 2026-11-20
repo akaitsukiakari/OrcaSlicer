@@ -1815,6 +1815,7 @@ void MenuFactory::create_extra_object_menu()
     // Set Printable
     wxMenuItem* menu_item_printable = append_menu_item_printable(&m_object_menu);
     wxMenuItem* menu_item_auto_drop = append_menu_item_auto_drop(&m_object_menu);
+    append_menu_items_arrange_lock(&m_object_menu);
     m_object_menu.AppendSeparator();
 
     append_menu_item_per_object_process(&m_object_menu);
@@ -2298,6 +2299,7 @@ wxMenu* MenuFactory::multi_selection_menu()
         append_menu_item_change_filament(menu);
         append_menu_item_set_printable(menu);
         append_menu_item_set_auto_drop(menu);
+        append_menu_items_arrange_lock(menu);
         menu->AppendSeparator();
 
         append_menu_item_per_object_process(menu);
@@ -2768,6 +2770,40 @@ void MenuFactory::append_menu_item_set_auto_drop(wxMenu* menu)
             plater()->set_current_canvas_as_dirty();
         },
         menu_item_set_auto_drop->GetId());
+}
+
+void MenuFactory::append_menu_items_arrange_lock(wxMenu* menu)
+{
+    wxMenuItem* position_item = append_menu_check_item(
+        menu, wxID_ANY, _L("Lock Position When Arranging"),
+        _L("Arranging leaves the selected objects where they are, at their rotation."),
+        [](wxCommandEvent&) {
+            Selection& selection = plater()->canvas3D()->get_selection();
+            selection.set_arrange_lock(selection.get_arrange_lock() == ArrangeLock::Position ? ArrangeLock::None : ArrangeLock::Position);
+        },
+        menu);
+    m_parent->Bind(
+        wxEVT_UPDATE_UI,
+        [](wxUpdateUIEvent& evt) { evt.Check(plater()->canvas3D()->get_selection().get_arrange_lock() == ArrangeLock::Position); },
+        position_item->GetId());
+
+    wxMenuItem* rotation_item = append_menu_check_item(
+        menu, wxID_ANY, _L("Lock Rotation When Arranging"),
+        _L("Arranging may move the selected objects but does not rotate them."),
+        [](wxCommandEvent&) {
+            Selection& selection = plater()->canvas3D()->get_selection();
+            selection.set_arrange_lock(selection.get_arrange_lock() == ArrangeLock::None ? ArrangeLock::Rotation : ArrangeLock::None);
+        },
+        menu);
+    m_parent->Bind(
+        wxEVT_UPDATE_UI,
+        [](wxUpdateUIEvent& evt) {
+            // A locked position keeps the rotation too.
+            const ArrangeLock lock = plater()->canvas3D()->get_selection().get_arrange_lock();
+            evt.Check(lock != ArrangeLock::None);
+            evt.Enable(lock != ArrangeLock::Position);
+        },
+        rotation_item->GetId());
 }
 
 void MenuFactory::append_menu_item_locked(wxMenu* menu, size_t pos)
