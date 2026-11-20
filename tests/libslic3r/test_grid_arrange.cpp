@@ -269,3 +269,42 @@ TEST_CASE("The grid arranger keeps an item's rotation when told to, even with ro
     CHECK(kept.bed_idx == UNARRANGED);
     CHECK_THAT(kept.rotation, WithinAbs(0., 1e-9));
 }
+
+TEST_CASE("The grid arranger groups similar items into one block of rows and columns", "[GridArrange]")
+{
+    // Twenty items of 25 x 12 mm, half of them a few tenths larger, and five larger ones.
+    ArrangePolygons items;
+    for (int i = 0; i < 20; ++i)
+        items.push_back(item(rectangle(i % 2 ? 25.3 : 25., i % 2 ? 12.2 : 12.)));
+    for (int i = 0; i < 5; ++i)
+        items.push_back(item(rectangle(60, 40)));
+    for (ArrangePolygon &ap : items)
+        ap.inflation = scaled(1.);
+    ArrangeParams params = grid_params();
+    params.group_similar = true;
+    arrange(items, {}, bed(270, 270), params);
+
+    // The small items sit on a grid: few distinct columns and rows, all filled but the last row.
+    // Centers within a millimetre of each other are in the same column or row.
+    const auto distinct = [](std::vector<coord_t> v) {
+        std::sort(v.begin(), v.end());
+        size_t n = 0;
+        for (size_t i = 0; i < v.size(); ++i)
+            if (i == 0 || v[i] - v[i - 1] > scaled(1.))
+                ++n;
+        return n;
+    };
+    std::vector<coord_t> cx, cy;
+    for (int i = 0; i < 20; ++i) {
+        REQUIRE(items[i].bed_idx == 0);
+        const BoundingBox bb = get_extents(placed(items[i]));
+        cx.push_back(bb.center().x());
+        cy.push_back(bb.center().y());
+    }
+    const size_t columns = distinct(cx), rows = distinct(cy);
+    CHECK(columns * rows >= 20);
+    CHECK(columns * rows < 20 + columns);
+    for (size_t i = 0; i < items.size(); ++i)
+        for (size_t j = i + 1; j < items.size(); ++j)
+            CHECK_THAT(overlap(items[i], items[j]), WithinAbs(0., no_area));
+}

@@ -2152,6 +2152,7 @@ void GLCanvas3D::load_arrange_settings()
         load_bool("classic_engine",  settings->classic_engine);
         load_bool("center_on_plate", settings->center_on_plate);
         load_bool("place_in_holes",  settings->place_in_holes);
+        load_bool("group_similar",   settings->group_similar);
     }
     {
         std::string value = wxGetApp().app_config->get("arrange", "arrange_mode");
@@ -7472,7 +7473,8 @@ void GLCanvas3D::_render_arrange_menu(float left, float right, float bottom, flo
     std::string avoid_extrusion_key = "avoid_extrusion_cali_region";
     const std::string keep_on_plate_key = "keep_on_plate", arrange_mode_key = "arrange_mode";
     const std::string wipe_tower_corner_key = "wipe_tower_to_corner";
-    const std::string classic_engine_key = "classic_engine", center_on_plate_key = "center_on_plate", place_in_holes_key = "place_in_holes";
+    const std::string classic_engine_key = "classic_engine", center_on_plate_key = "center_on_plate", place_in_holes_key = "place_in_holes",
+                      group_similar_key = "group_similar";
     std::string postfix;
     //BBS:
     bool seq_print = false;
@@ -7550,6 +7552,9 @@ void GLCanvas3D::_render_arrange_menu(float left, float right, float bottom, flo
         imgui->disabled_begin(settings_out.classic_engine);
         if (imgui->bbl_checkbox(_L("Place objects inside holes of other objects"), settings_out.place_in_holes))
             appcfg->set("arrange", place_in_holes_key, settings_out.place_in_holes);
+        // TRN Arrange option: identical or nearly identical objects are packed in rows and columns together.
+        if (imgui->bbl_checkbox(_L("Group similar objects into grids"), settings_out.group_similar))
+            appcfg->set("arrange", group_similar_key, settings_out.group_similar);
         imgui->disabled_end();
 
         const std::vector<std::string> modes = {
@@ -7598,6 +7603,7 @@ void GLCanvas3D::_render_arrange_menu(float left, float right, float bottom, flo
         appcfg->erase("arrange", classic_engine_key);
         appcfg->erase("arrange", center_on_plate_key);
         appcfg->erase("arrange", place_in_holes_key);
+        appcfg->erase("arrange", group_similar_key);
     }
     ImGui::PopStyleVar(1);
     imgui->end();

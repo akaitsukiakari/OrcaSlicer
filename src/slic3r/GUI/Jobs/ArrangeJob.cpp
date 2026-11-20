@@ -1515,6 +1515,7 @@ arrangement::ArrangeParams init_arrange_params(Plater *p)
     params.align_to_y_axis                     = settings.align_to_y_axis;
     params.grid_engine                         = !settings.classic_engine;
     params.place_in_holes                      = settings.place_in_holes;
+    params.group_similar                       = settings.group_similar;
     if (settings.center_on_plate)
         params.align_center = Vec2d(0.5, 0.5);
     if (print_config.belt_printer.value) {

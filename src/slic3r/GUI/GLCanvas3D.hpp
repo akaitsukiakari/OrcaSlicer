@@ -730,6 +730,8 @@ public:
         bool  center_on_plate    = false;
         // Let the grid arranger put objects inside the holes of others.
         bool  place_in_holes     = false;
+        // Let the grid arranger pack objects of about the same footprint in blocks of rows and columns.
+        bool  group_similar      = true;
     };
 
     struct OrientSettings

@@ -17,7 +17,9 @@
 #include <limits>
 #include <memory>
 #include <numeric>
+#include <optional>
 #include <set>
+#include <tuple>
 #include <utility>
 #include <vector>
 
@@ -223,6 +225,38 @@ bool rasters_overlap(const Raster &a, int ax, int ay, const Raster &b, int bx, i
     return false;
 }
 
+int cell_count(const Raster &raster)
+{
+    int count = 0;
+    for (const auto &spans : raster.rows)
+        for (const auto &[a, b] : spans)
+            count += b - a + 1;
+    return count;
+}
+
+// Adds `raster`'s spans to `block` with its origin at (x, y) of the block; normalize() after.
+void add_raster(Raster &block, const Raster &raster, int x, int y)
+{
+    for (int ry = 0; ry < raster.h; ++ry)
+        for (const auto &[a, b] : raster.rows[ry])
+            block.rows[y + ry].emplace_back(x + a, x + b);
+}
+
+// Sorts and merges each row's spans.
+void normalize(Raster &raster)
+{
+    for (auto &spans : raster.rows) {
+        std::sort(spans.begin(), spans.end());
+        std::vector<std::pair<int, int>> merged;
+        for (const auto &span : spans)
+            if (!merged.empty() && span.first <= merged.back().second + 1)
+                merged.back().second = std::max(merged.back().second, span.second);
+            else
+                merged.push_back(span);
+        spans = std::move(merged);
+    }
+}
+
 // The shape an item takes, inflated, at its rotation and with no translation.
 ExPolygons item_shape(const ArrangePolygon &ap, double rotation, const ArrangeParams &params, coord_t extra_inflation = 0)
 {
@@ -277,6 +311,26 @@ struct Bed
         int    cx, cy;
     };
     std::vector<Placed> placed;
+    // The boxes of the bed's objects, fixed and placed, which new items go next to, and the
+    // box around them all.
+    std::vector<std::tuple<int, int, int, int>> boxes;
+    int cluster_x0 = 0, cluster_y0 = 0, cluster_x1 = 0, cluster_y1 = 0;
+
+    void add_box(int x0, int y0, int x1, int y1)
+    {
+        boxes.emplace_back(x0, y0, x1, y1);
+        if (cluster_x0 >= cluster_x1) {
+            cluster_x0 = x0;
+            cluster_y0 = y0;
+            cluster_x1 = x1;
+            cluster_y1 = y1;
+        } else {
+            cluster_x0 = std::min(cluster_x0, x0);
+            cluster_y0 = std::min(cluster_y0, y0);
+            cluster_x1 = std::max(cluster_x1, x1);
+            cluster_y1 = std::max(cluster_y1, y1);
+        }
+    }
 };
 
 bool materials_fit(const Bed &bed, const ArrangePolygon &ap, const ArrangeParams &params)
@@ -344,6 +398,9 @@ void grid_arrange(ArrangePolygons &items, const ArrangePolygons &fixed, const Po
                         bed.conditional.push_back({&ap, std::move(raster)});
                     else {
                         bed.cells.take(raster, raster.ox, raster.oy);
+                        // Real objects, as packed before by an arrange mode, are what new items gather by.
+                        if (!ap.is_virt_object)
+                            bed.add_box(raster.ox, raster.oy, raster.ox + raster.w, raster.oy + raster.h);
                         bed.fixed.push_back(std::move(raster));
                         add_materials(bed, ap);
                     }
@@ -352,96 +409,264 @@ void grid_arrange(ArrangePolygons &items, const ArrangePolygons &fixed, const Po
         return *beds[idx];
     };
 
-    // The packing order: priority first, as the arrange modes set it; then bed temperature, so
-    // a bed's objects share it; then the large items, which need room most; then by height, so
-    // objects of similar height end up next to each other; then by area.
-    const double large_area = 0.125 * double(bedbb.size().x()) * double(bedbb.size().y());
-    const double height_band = std::max(1., double(params.printable_height) / 8.);
-    std::vector<size_t> order(items.size());
-    std::iota(order.begin(), order.end(), 0);
-    std::vector<double> areas(items.size());
-    for (size_t i = 0; i < items.size(); ++i)
-        areas[i] = std::abs(items[i].poly.area());
-    std::stable_sort(order.begin(), order.end(), [&](size_t a, size_t b) {
+    // Items are placed in units: a single item, or with group_similar, a block of rows and
+    // columns of items with about the same footprint and the same materials.
+    struct ItemShapes
+    {
+        std::vector<double> rotations;
+        std::vector<Raster> rasters;
+    };
+    std::vector<ItemShapes> shapes(items.size());
+    for (size_t i = 0; i < items.size(); ++i) {
+        const ArrangePolygon &ap = items[i];
+        // The item's own rotation, or with rotations allowed, the four that square its
+        // narrowest bounding box with the bed.
+        ItemShapes &sh = shapes[i];
+        sh.rotations   = {ap.rotation};
+        if (params.allow_rotations && !ap.keep_rotation) {
+            const double base = MinAreaBoundigBox(ap.poly.contour, MinAreaBoundigBox::pcConvex).angle_to_X();
+            sh.rotations      = {base, base + PI / 2, base + PI, base + 3 * PI / 2};
+        }
+        for (double rotation : sh.rotations)
+            sh.rasters.push_back(rasterize(item_shape(ap, rotation, params), grid));
+    }
+
+    // An item that matches a unit's first item: with its rotations reordered so they line up.
+    const auto similar = [&](size_t a, size_t b) -> std::optional<size_t> {
         const ArrangePolygon &ia = items[a], &ib = items[b];
+        if (ia.priority != ib.priority || ia.bed_temp != ib.bed_temp || ia.filament_temp_type != ib.filament_temp_type ||
+            ia.extrude_ids != ib.extrude_ids || shapes[a].rotations.size() != shapes[b].rotations.size())
+            return std::nullopt;
+        const Raster &ra = shapes[a].rasters.front();
+        if (ra.empty())
+            return std::nullopt;
+        const int count_a = cell_count(ra);
+        for (size_t k = 0; k < shapes[b].rasters.size(); ++k) {
+            const Raster &rb = shapes[b].rasters[k];
+            if (!rb.empty() && std::abs(ra.w - rb.w) <= 1 && std::abs(ra.h - rb.h) <= 1 &&
+                std::abs(count_a - cell_count(rb)) <= std::max(2, count_a * 3 / 100))
+                return k;
+        }
+        return std::nullopt;
+    };
+
+    struct Unit
+    {
+        std::vector<size_t> items;
+        double              area = 0.;
+    };
+    std::vector<Unit> units;
+    {
+        std::vector<bool> grouped(items.size(), false);
+        for (size_t i = 0; i < items.size(); ++i) {
+            if (grouped[i])
+                continue;
+            Unit unit;
+            unit.items.push_back(i);
+            if (params.group_similar)
+                for (size_t j = i + 1; j < items.size(); ++j)
+                    if (!grouped[j])
+                        if (const std::optional<size_t> k = similar(i, j)) {
+                            grouped[j] = true;
+                            std::rotate(shapes[j].rotations.begin(), shapes[j].rotations.begin() + *k, shapes[j].rotations.end());
+                            std::rotate(shapes[j].rasters.begin(), shapes[j].rasters.begin() + *k, shapes[j].rasters.end());
+                            unit.items.push_back(j);
+                        }
+            for (size_t j : unit.items)
+                unit.area += std::abs(items[j].poly.area());
+            units.push_back(std::move(unit));
+        }
+    }
+
+    // The packing order: priority first, as the arrange modes set it; then bed temperature, so
+    // a bed's objects share it; then the largest units, which need room most.
+    std::stable_sort(units.begin(), units.end(), [&](const Unit &ua, const Unit &ub) {
+        const ArrangePolygon &ia = items[ua.items.front()], &ib = items[ub.items.front()];
         if (ia.priority != ib.priority)
             return ia.priority > ib.priority;
         if (ia.bed_temp != ib.bed_temp)
             return ia.bed_temp > ib.bed_temp;
-        const bool la = areas[a] > large_area, lb = areas[b] > large_area;
-        if (la != lb)
-            return la;
-        const int ha = int(ia.height / height_band), hb = int(ib.height / height_band);
-        if (ha != hb)
-            return ha > hb;
-        return areas[a] > areas[b];
+        return ua.area > ub.area;
     });
 
+    // The best spot on a bed for a raster: where the box around the bed's cluster of objects
+    // grows the least, after sliding toward the bed's corner. The cluster
+    // starts in the corner, which leaves the most room in one piece, and is moved to the
+    // alignment point at the end.
+    struct Spot
+    {
+        int       x = 0, y = 0;
+        long long area = 0, dist = 0;
+        bool operator<(const Spot &o) const { return std::tie(area, dist) < std::tie(o.area, o.dist); }
+    };
+    const auto best_spot = [&](const Bed &bed, const Raster &raster, const std::function<bool(int, int)> &clear) -> std::optional<Spot> {
+        const auto ok = [&](int x, int y) { return bed.cells.fits(raster, x, y) && (!clear || clear(x, y)); };
+        // A slide goes toward the corner.
+        const int tx = 0, ty = 0;
+        const auto slide = [&](int &x, int &y) {
+            for (bool moved = true; moved;) {
+                moved = false;
+                if (x != tx && ok(x + (tx > x ? 1 : -1), y)) {
+                    x += tx > x ? 1 : -1;
+                    moved = true;
+                }
+                if (y != ty && ok(x, y + (ty > y ? 1 : -1))) {
+                    y += ty > y ? 1 : -1;
+                    moved = true;
+                }
+            }
+        };
+        const auto score = [&](int x, int y) {
+            Spot s{x, y};
+            int x0 = x, y0 = y, x1 = x + raster.w, y1 = y + raster.h;
+            if (bed.cluster_x0 < bed.cluster_x1) {
+                x0 = std::min(x0, bed.cluster_x0);
+                y0 = std::min(y0, bed.cluster_y0);
+                x1 = std::max(x1, bed.cluster_x1);
+                y1 = std::max(y1, bed.cluster_y1);
+            }
+            s.area = (long long)(x1 - x0) * (y1 - y0);
+            // Then reaching least high, then least far right, which packs a nearly full bed densest.
+            s.dist = (long long)(y + raster.h) * (cols + 1) + x + raster.w;
+            return s;
+        };
+
+        std::vector<std::pair<int, int>> candidates;
+        if (bed.cluster_x0 < bed.cluster_x1) {
+            for (const auto &[x0, y0, x1, y1] : bed.boxes) {
+                const int w = raster.w, h = raster.h;
+                for (const auto &c : {std::make_pair(x1, y0), std::make_pair(x1, y1 - h), std::make_pair(x0 - w, y0), std::make_pair(x0 - w, y1 - h),
+                                      std::make_pair(x0, y1), std::make_pair(x1 - w, y1), std::make_pair(x0, y0 - h), std::make_pair(x1 - w, y0 - h)})
+                    candidates.push_back(c);
+            }
+        } else
+            candidates.emplace_back(tx, ty);
+
+        // And the lowest, leftmost free spot, which finds the gaps away from the boxes' sides.
+        {
+            int x, y;
+            if (!bed.cells.find(raster, x, y, clear))
+                return std::nullopt;
+            candidates.emplace_back(x, y);
+        }
+
+        std::optional<Spot> best;
+        for (auto [x, y] : candidates) {
+            if (!ok(x, y))
+                continue;
+            slide(x, y);
+            const Spot s = score(x, y);
+            if (!best || s < *best)
+                best = s;
+        }
+        return best;
+    };
+
     int packed = 0;
-    for (size_t i : order) {
+    for (const Unit &unit : units) {
         if (params.stopcondition && params.stopcondition())
             break;
-        ArrangePolygon &ap = items[i];
-
-        // The rotations to try: the item's own, or with rotations allowed, the four that square
-        // its narrowest bounding box with the bed.
-        std::vector<double> rotations{ap.rotation};
-        if (params.allow_rotations && !ap.keep_rotation) {
-            const double base = MinAreaBoundigBox(ap.poly.contour, MinAreaBoundigBox::pcConvex).angle_to_X();
-            rotations = {base, base + PI / 2, base + PI, base + 3 * PI / 2};
-        }
-        std::vector<Raster> rasters;
-        for (double rotation : rotations)
-            rasters.push_back(rasterize(item_shape(ap, rotation, params), grid));
-
-        ap.bed_idx = UNARRANGED;
-        for (int bed_idx = 0; bed_idx < MAX_NUM_PLATES; ++bed_idx) {
+        const ArrangePolygon &first = items[unit.items.front()];
+        std::vector<size_t>   left  = unit.items;
+        for (int bed_idx = 0; bed_idx < MAX_NUM_PLATES && !left.empty(); ++bed_idx) {
             Bed &bed = bed_at(bed_idx);
-            if (!materials_fit(bed, ap, params))
+            if (!materials_fit(bed, first, params))
                 continue;
             std::vector<const Obstacle *> conditional;
             for (const Obstacle &o : bed.conditional)
-                if (bed_exclusion_applies(ap, *o.ap))
+                if (bed_exclusion_applies(first, *o.ap))
                     conditional.push_back(&o);
 
-            // The rotation reaching least high, then least far right.
-            int best = -1, best_x = 0, best_y = 0;
-            for (size_t k = 0; k < rasters.size(); ++k) {
-                const Raster &raster = rasters[k];
-                if (raster.empty())
-                    continue;
-                int x, y;
-                const auto clear = [&](int cx, int cy) {
-                    return std::none_of(conditional.begin(), conditional.end(), [&](const Obstacle *o) {
-                        return rasters_overlap(raster, cx, cy, o->raster, o->raster.ox, o->raster.oy);
-                    });
+            // As many of the unit's items as fit on this bed, in one block, for each rotation;
+            // a bed may take more than one block.
+            while (!left.empty()) {
+                const size_t n = left.size();
+                struct Layout
+                {
+                    size_t k, count;
+                    int    cols, pw, ph;
                 };
-                if (!bed.cells.find(raster, x, y, conditional.empty() ? std::function<bool(int, int)>() : clear))
-                    continue;
-                if (best < 0 || std::make_pair(y + raster.h, x + raster.w) < std::make_pair(best_y + rasters[best].h, best_x + rasters[best].w)) {
-                    best   = int(k);
-                    best_x = x;
-                    best_y = y;
+                std::vector<Layout> layouts;
+                for (size_t k = 0; k < shapes[left.front()].rasters.size(); ++k) {
+                    int pw = 0, ph = 0;
+                    for (size_t i : left) {
+                        pw = std::max(pw, shapes[i].rasters[k].w);
+                        ph = std::max(ph, shapes[i].rasters[k].h);
+                    }
+                    if (pw == 0 || ph == 0 || pw > cols || ph > rows)
+                        continue;
+                    // About as many items across as up, by length.
+                    const int c = std::clamp(int(std::lround(std::sqrt(double(n) * ph / pw))), 1, std::min(int(n), cols / pw));
+                    for (int r = int((n + c - 1) / c); r >= 1; --r)
+                        layouts.push_back({k, std::min(n, size_t(c) * r), c, pw, ph});
+                    for (int c2 = std::min(c, int(n)) - 1; c2 >= 1; --c2)
+                        layouts.push_back({k, size_t(c2), c2, pw, ph});
                 }
+                std::stable_sort(layouts.begin(), layouts.end(), [](const Layout &a, const Layout &b) { return a.count > b.count; });
+
+                // Each item's raster and its origin in the block.
+                struct Slot
+                {
+                    size_t item;
+                    int    x, y;
+                };
+                std::optional<Spot> best;
+                std::vector<Slot>   best_slots;
+                Raster              best_block;
+                size_t              best_k = 0, best_count = 0;
+                for (const Layout &l : layouts) {
+                    if (best && l.count < best_count)
+                        break;
+                    std::vector<Slot> slots;
+                    Raster            block;
+                    block.w = std::min(int(l.count), l.cols) * l.pw;
+                    block.h = int((l.count + l.cols - 1) / l.cols) * l.ph;
+                    block.rows.resize(block.h);
+                    for (size_t j = 0; j < l.count; ++j) {
+                        const Raster &r = shapes[left[j]].rasters[l.k];
+                        const int     x = int(j % l.cols) * l.pw + (l.pw - r.w) / 2, y = int(j / l.cols) * l.ph + (l.ph - r.h) / 2;
+                        slots.push_back({left[j], x, y});
+                        add_raster(block, r, x, y);
+                    }
+                    normalize(block);
+                    const auto clear = conditional.empty() ? std::function<bool(int, int)>() : [&](int cx, int cy) {
+                        return std::none_of(conditional.begin(), conditional.end(), [&](const Obstacle *o) {
+                            return rasters_overlap(block, cx, cy, o->raster, o->raster.ox, o->raster.oy);
+                        });
+                    };
+                    if (const std::optional<Spot> s = best_spot(bed, block, clear); s && (!best || *s < *best)) {
+                        best       = s;
+                        best_slots = std::move(slots);
+                        best_block = std::move(block);
+                        best_k     = l.k;
+                        best_count = l.count;
+                    }
+                }
+                if (!best)
+                    break;
+
+                bed.cells.take(best_block, best->x, best->y);
+                bed.add_box(best->x, best->y, best->x + best_block.w, best->y + best_block.h);
+                for (const Slot &slot : best_slots) {
+                    ArrangePolygon &ap     = items[slot.item];
+                    const Raster   &raster = shapes[slot.item].rasters[best_k];
+                    const int       cx = best->x + slot.x, cy = best->y + slot.y;
+                    add_materials(bed, ap);
+                    bed.placed.push_back({slot.item, raster, cx, cy});
+                    ap.rotation    = shapes[slot.item].rotations[best_k];
+                    ap.translation = Vec2crd(coord_t(std::llround((cx - raster.ox) * cell)), coord_t(std::llround((cy - raster.oy) * cell)));
+                    ap.bed_idx     = bed_idx;
+                    ap.itemid      = packed++;
+                    if (params.progressind)
+                        params.progressind(unsigned(packed), ap.name);
+                    if (params.on_packed)
+                        params.on_packed(ap);
+                }
+                left.erase(left.begin(), left.begin() + best_count);
             }
-            if (best < 0)
-                continue;
-
-            const Raster &raster = rasters[best];
-            bed.cells.take(raster, best_x, best_y);
-            add_materials(bed, ap);
-            bed.placed.push_back({i, raster, best_x, best_y});
-            ap.rotation    = rotations[best];
-            ap.translation = Vec2crd(coord_t(std::llround((best_x - raster.ox) * cell)), coord_t(std::llround((best_y - raster.oy) * cell)));
-            ap.bed_idx     = bed_idx;
-            ap.itemid      = packed++;
-            break;
         }
-
-        if (params.progressind)
-            params.progressind(unsigned(packed), ap.name);
-        if (params.on_packed && ap.bed_idx >= 0)
-            params.on_packed(ap);
+        for (size_t i : left)
+            items[i].bed_idx = UNARRANGED;
     }
 
     if (!params.do_final_align)

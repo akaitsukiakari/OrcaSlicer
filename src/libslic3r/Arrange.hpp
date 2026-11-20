@@ -158,6 +158,9 @@ struct ArrangeParams {
     bool grid_engine = false;
     /// For the grid arranger: items may go inside the holes of others' footprints.
     bool place_in_holes = false;
+    /// For the grid arranger: items of about the same footprint and materials go in one block of
+    /// rows and columns.
+    bool group_similar = false;
 
     //BBS: add specific arrange params
     bool  allow_multi_materials_on_same_plate = true;
