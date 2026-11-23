@@ -57,6 +57,11 @@ static const constexpr int UNARRANGED = -1;
 /// Zero is the physical bed, larger than zero means a virtual bed.
 struct ArrangePolygon {
     ExPolygon poly;                 /// The 2D silhouette to be arranged
+    /// The item's real outline, in poly's frame: poly is its convex hull. Only the grid
+    /// arranger uses it, and only when given; otherwise it arranges poly.
+    ExPolygons footprint;
+    /// Computes footprint, which can take a while: call it off the main thread before arranging.
+    std::function<ExPolygons()> get_footprint;
     Vec2crd   translation{0, 0};    /// The translation of the poly
     double    rotation{0.0};        /// The rotation of the poly in radians
     coord_t   inflation = 0;        /// Arrange with inflated polygon
@@ -98,6 +103,8 @@ struct ArrangePolygon {
     // If empty, any rotation is allowed (currently unsupported)
     // If only a zero is there, no rotation is allowed
     std::vector<double> allowed_rotations = {0.};
+    // The arranger keeps the item at its rotation even when rotations are allowed.
+    bool keep_rotation = false;
 
     /// Optional setter function which can store arbitrary data in its closure
     std::function<void(const ArrangePolygon&)> setter = nullptr;
@@ -145,6 +152,15 @@ struct ArrangeParams {
     /// Put each item on the first bed it fits rather than the bed it fits best,
     /// so the earlier beds are filled before the later ones get anything.
     bool first_fit = false;
+
+    /// Arrange with the grid arranger (GridArrange.hpp) where it supports the params: it always
+    /// puts an item on the first bed with room, so first_fit makes no difference to it.
+    bool grid_engine = false;
+    /// For the grid arranger: items may go inside the holes of others' footprints.
+    bool place_in_holes = false;
+    /// For the grid arranger: items of about the same footprint and materials go in one block of
+    /// rows and columns.
+    bool group_similar = false;
 
     //BBS: add specific arrange params
     bool  allow_multi_materials_on_same_plate = true;

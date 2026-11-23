@@ -101,6 +101,21 @@ public:
         };
 
         auto& cancelled = this->stopcond_;
+
+        // An item that does not fit an otherwise empty bed is tried again without the bed's
+        // virtual fixed items, such as excluded regions. Fixed objects never give way to it, or
+        // it would be placed on top of them.
+        const auto gives_way = [](const Item &itm) { return itm.isFixed() && itm.is_virt_object && !itm.is_wipe_tower; };
+        const auto restore_fixed = [&](size_t bed) {
+            placers[bed].clearItems(gives_way);
+            if (bed < fixed_bins.size()) {
+                ItemGroup group;
+                for (Item &itm : fixed_bins[bed])
+                    if (gives_way(itm))
+                        group.emplace_back(itm);
+                placers[bed].preload(group);
+            }
+        };
         
         this->template remove_unpackable_items<Placer>(store_, bin, pconfig);
 
@@ -161,23 +176,18 @@ public:
                     makeProgress(placers[j], j);
                 }
 
-                if (was_packed && it->get().has_tried_with_excluded) {
-                    placers[j].clearItems([](const Item &itm) { return itm.isFixed() && !itm.is_wipe_tower; });
-                    if (fixed_bins.size() >= placers.size())
-                        placers[j].preload(fixed_bins[placers.size() - 1]);
-                }
+                if (was_packed && it->get().has_tried_with_excluded)
+                    restore_fixed(j);
                 bool placer_not_packed = !was_packed && !placers.empty() && j == placers.size() && placers[j - 1].getPackedSize() == 0; // large item is not placed into the bin
                 if (placer_not_packed) {
                     if (it->get().has_tried_with_excluded == false) {
                         it->get().has_tried_with_excluded = true;
-                        placers[j - 1].clearItems([](const Item &itm) { return itm.isFixed()&&!itm.is_wipe_tower; });
+                        placers[j - 1].clearItems(gives_way);
                         placers[j - 1].preload(pconfig.m_excluded_items);
                         j = j - 1;
                         continue;
-                    } else {
-                        placers[j - 1].clearItems([](const Item &itm) { return itm.isFixed() && !itm.is_wipe_tower; });
-                        placers[j - 1].preload(fixed_bins[placers.size() - 1]);
-                    }
+                    } else
+                        restore_fixed(j - 1);
                 }
 
                 if(!was_packed){

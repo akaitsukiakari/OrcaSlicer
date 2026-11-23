@@ -356,6 +356,8 @@ static constexpr const char* OFFSET_ATTR = "offset";
 static constexpr const char* PRINTABLE_ATTR = "printable";
 static constexpr const char* AUTO_DROP_ATTR = "auto_drop";
 static constexpr const char* IMPORTED_PARTS_HIDDEN_KEY = "orca:imported_parts_hidden";
+// "rotation" or "position". An object metadata key, so other slicers skip it.
+static constexpr const char* ARRANGE_LOCK_KEY = "orca:arrange_lock";
 static constexpr const char* INSTANCESCOUNT_ATTR = "instances_count";
 static constexpr const char* CUSTOM_SUPPORTS_ATTR = "paint_supports";
 static constexpr const char* CUSTOM_FUZZY_SKIN_ATTR  = "paint_fuzzy_skin";
@@ -2292,6 +2294,9 @@ void PlateData::parse_filament_info(GCodeProcessorResult *result)
                     // This is model presentation state, never a print configuration option.
                     else if (metadata.key == IMPORTED_PARTS_HIDDEN_KEY)
                         imported_parts_hidden = metadata.value == "1";
+                    else if (metadata.key == ARRANGE_LOCK_KEY)
+                        model_object->arrange_lock = metadata.value == "position" ? ArrangeLock::Position :
+                                                     metadata.value == "rotation" ? ArrangeLock::Rotation : ArrangeLock::None;
                     //BBS: add module name
                     else if (metadata.key == "module")
                         model_object->module_name = metadata.value;
@@ -8391,6 +8396,9 @@ bool _BBS_3MF_Exporter::_add_model_config_file_to_archive(mz_zip_archive& archiv
                 if (obj->imported_parts_hidden)
                     stream << "    <" << METADATA_TAG << " " << KEY_ATTR << "=\"" << IMPORTED_PARTS_HIDDEN_KEY
                            << "\" " << VALUE_ATTR << "=\"1\"/>\n";
+                if (obj->arrange_lock != ArrangeLock::None)
+                    stream << "    <" << METADATA_TAG << " " << KEY_ATTR << "=\"" << ARRANGE_LOCK_KEY << "\" " << VALUE_ATTR << "=\""
+                           << (obj->arrange_lock == ArrangeLock::Position ? "position" : "rotation") << "\"/>\n";
                 for (const std::string& key : obj->config.keys()) {
                     stream << "    <" << METADATA_TAG << " " << KEY_ATTR << "=\"" << key << "\" " << VALUE_ATTR << "=\"" << obj->config.opt_serialize(key) << "\"/>\n";
                 }

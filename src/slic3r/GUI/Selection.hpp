@@ -28,6 +28,7 @@ class ModelObject;
 class ModelVolume;
 class ObjectID;
 class ModelInstance;
+enum class ArrangeLock : unsigned char;
 class GLVolume;
 class GLArrow;
 class GLCurvedArrow;
@@ -255,6 +256,9 @@ public:
     void set_printable(bool printable);
     bool get_auto_drop() const;
     void set_auto_drop(bool enabled);
+    // The weakest arrange lock among the selected objects, so a menu check shows only when all have it.
+    ArrangeLock get_arrange_lock() const;
+    void set_arrange_lock(ArrangeLock lock);
 
     void add_all();
     void remove_all();

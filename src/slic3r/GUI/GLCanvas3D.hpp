@@ -724,6 +724,14 @@ public:
         Mode  mode               = Mode::Default;
         // Arranging and filling a plate first move its prime tower to a free corner.
         bool  move_wipe_tower_to_corner = true;
+        // Arrange with the libnest2d arranger instead of the grid one (GridArrange.hpp).
+        bool  classic_engine     = false;
+        // Center the arranged objects on the plate instead of the printer profile's best object position.
+        bool  center_on_plate    = false;
+        // Let the grid arranger put objects inside the holes of others.
+        bool  place_in_holes     = false;
+        // Let the grid arranger pack objects of about the same footprint in blocks of rows and columns.
+        bool  group_similar      = true;
     };
 
     struct OrientSettings
