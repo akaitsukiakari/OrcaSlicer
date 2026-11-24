@@ -791,7 +791,7 @@ void MultiSwitchButton::update_dropdown()
     if (!m_dropdown)
         return;
     // A modified option is named as a modified preset is.
-    const wxString suffix = from_u8(Slic3r::PresetCollection::get_suffix_modified());
+    const wxString suffix = wxString::FromUTF8(Slic3r::PresetCollection::get_suffix_modified());
     // Renamed in place when the count holds: this also runs from the list's own selection event.
     const bool rebuild = m_dropdown->GetCount() != btns.size();
     if (rebuild)
