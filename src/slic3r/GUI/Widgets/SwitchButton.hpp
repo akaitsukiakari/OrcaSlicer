@@ -137,6 +137,8 @@ private:
     bool auto_disable_when_switch = false;
 };
 
+class ComboBox;
+
 class MultiSwitchButton : public StaticBox
 {
 public:
@@ -186,6 +188,10 @@ public:
     // A layout with less room than that still squeezes it, and it scrolls its buttons then.
     void SetFitToOptions(bool fit = true) { m_fit_to_options = fit; update_scroll_range(); }
 
+    // Orca: show the options in a drop-down list instead of a row of buttons, for a switch with more options
+    // than a narrow row fits. The switch keeps its interface: only the control the user picks with changes.
+    void UseDropdown();
+
     void Rescale();
 
 protected:
@@ -201,12 +207,14 @@ private:
     int  scrollbar_height(int options_width) const;
     void scroll_option_into_view(Button *btn);
     void on_size(wxSizeEvent &evt);
+    void update_dropdown();
 
     std::vector<Button *> btns;
     std::vector<bool> btns_modified;
     // The buttons are laid out inside this scrolled area so that a switch holding more options than
     // the layout has room for scrolls instead of clipping its tail.
     wxScrolledWindow     *m_scroll         = nullptr;
+    ComboBox             *m_dropdown       = nullptr; // replaces m_scroll after UseDropdown()
     wxBoxSizer           *sizer            = nullptr;
     bool                  m_fit_to_options = false;
     int                   sel              = -1;

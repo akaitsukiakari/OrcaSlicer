@@ -586,6 +586,8 @@ void Tab::create_preset_tab()
         m_extruder_switch = new MultiSwitchButton(panel);
         m_extruder_switch->SetFont(Label::Body_11);
         m_extruder_switch->SetFitToOptions();
+        // Orca: a drop-down list, since a row of one button per tool and nozzle type does not fit the sidebar.
+        m_extruder_switch->UseDropdown();
         m_extruder_switch->Bind(wxCUSTOMEVT_MULTISWITCH_SELECTION, [this](auto &evt) {
             evt.Skip();
             int selection = evt.GetInt();
@@ -619,9 +621,8 @@ void Tab::create_preset_tab()
         left_sizer->Add(icon               , 0, wxALIGN_CENTER | wxLEFT , m_em_unit);
         right_sizer->Add(m_extruder_sync_box, 0, wxALIGN_CENTER | wxRIGHT, m_em_unit);
 
-        // Orca: "Edit all nozzles", one app setting shared by the process and printer tabs. Object and plate
-        // settings edit their own copies of the process, so they keep editing one nozzle at a time.
-        if (m_type == Preset::TYPE_PRINT || m_type == Preset::TYPE_PRINTER) {
+        // Orca: "Edit all nozzles", one app setting shared by the process, printer, plate and object tabs.
+        {
             m_extruder_link = new LabeledCheckBox(panel, _L("Edit all nozzles"));
             m_extruder_link->SetFont(Label::Body_11);
             wxGetApp().UpdateDarkUI(m_extruder_link, false, true);
@@ -632,8 +633,11 @@ void Tab::create_preset_tab()
             m_extruder_link->Bind(wxEVT_CHECKBOX, [](wxCommandEvent &evt) {
                 const bool link = evt.IsChecked();
                 wxGetApp().app_config->set_bool("link_nozzle_settings", link);
-                for (Tab *tab : wxGetApp().tabs_list)
-                    if (tab->m_extruder_link)
+                auto tabs = wxGetApp().tabs_list;
+                tabs.insert(tabs.end(), wxGetApp().model_tabs_list.begin(), wxGetApp().model_tabs_list.end());
+                tabs.push_back(wxGetApp().plate_tab);
+                for (Tab *tab : tabs)
+                    if (tab != nullptr && tab->m_extruder_link)
                         tab->m_extruder_link->SetValue(link);
             });
             left_sizer->Add(m_extruder_link, 0, wxALIGN_CENTER | wxLEFT, m_em_unit);
@@ -4178,6 +4182,19 @@ void TabPrintPlate::update_mixed_filament_seq_state()
     toggle_option("other_layers_sequence_choice", !has_mixed, -1, mixed_filament_order_reason);
 }
 
+// A one-value nullable vector of each type, holding nil: an object's per-column override that is not set.
+static std::map<ConfigOptionType, ConfigOptionVectorBase const *> &nil_vectors()
+{
+    static std::map<ConfigOptionType, ConfigOptionVectorBase const *> null_vecs {
+        {coBools, new ConfigOptionBoolsNullable(std::initializer_list<unsigned char>{ConfigOptionBoolsNullable::nil_value()})},
+        {coInts, new ConfigOptionIntsNullable(1, ConfigOptionIntsNullable::nil_value())},
+        {coFloats, new ConfigOptionFloatsNullable(1, ConfigOptionFloatsNullable::nil_value())},
+        {coPercents, new ConfigOptionPercentsNullable(1, ConfigOptionPercentsNullable::nil_value())},
+        {coFloatsOrPercents, new ConfigOptionFloatsOrPercentsNullable(1, ConfigOptionFloatsOrPercentsNullable::nil_value())}
+    };
+    return null_vecs;
+}
+
 void TabPrintModel::on_value_change(const std::string& opt_id, const boost::any& value)
 {
     // TODO: support opt_index, translate by OptionsGroup's m_opt_map
@@ -4204,13 +4221,7 @@ void TabPrintModel::on_value_change(const std::string& opt_id, const boost::any&
     // always add object config
     bool set   = true; // *m_config->option(k) != *m_prints.get_selected_preset().config.option(k) || inull != m_null_keys.end();
     auto tab_opt = dynamic_cast<ConfigOptionVectorBase *>(m_config->option(opt_key));
-    static std::map<ConfigOptionType, ConfigOptionVectorBase const *> null_vecs {
-        {coBools, new ConfigOptionBoolsNullable(std::initializer_list<unsigned char>{ConfigOptionBoolsNullable::nil_value()})},
-        {coInts, new ConfigOptionIntsNullable(1, ConfigOptionIntsNullable::nil_value())},
-        {coFloats, new ConfigOptionFloatsNullable(1, ConfigOptionFloatsNullable::nil_value())},
-        {coPercents, new ConfigOptionPercentsNullable(1, ConfigOptionPercentsNullable::nil_value())},
-        {coFloatsOrPercents, new ConfigOptionFloatsOrPercentsNullable(1, ConfigOptionFloatsOrPercentsNullable::nil_value())}
-    };
+    auto &null_vecs = nil_vectors();
     if (m_back_to_sys) {
         if (opt_key == opt_id) {
             for (auto config : m_object_configs)
@@ -4253,6 +4264,50 @@ void TabPrintModel::on_value_change(const std::string& opt_id, const boost::any&
     m_back_to_sys = false;
     TabPrint::on_value_change(opt_id, value);
     for (auto config : m_object_configs) {
+        config.second->touch();
+        notify_changed(config.first);
+    }
+    wxGetApp().params_panel()->notify_object_config_changed();
+}
+
+void TabPrintModel::apply_linked_edit(const std::string &key, int from, int stride, const std::vector<int> &targets)
+{
+    // Orca: the objects take the linked columns as overrides of their own, or, when the edit reverted the
+    // source column to the process value, drop them too.
+    auto *values = dynamic_cast<ConfigOptionVectorBase *>(m_config->option(key));
+    if (values == nullptr || !has_key(key))
+        return;
+    const bool override = std::find(m_all_keys.begin(), m_all_keys.end(), key + "#" + std::to_string(from)) != m_all_keys.end();
+    const auto *process = dynamic_cast<const ConfigOptionVectorBase *>(m_parent_tab->m_config->option(key));
+    for (int to : targets) {
+        const std::string id = key + "#" + std::to_string(to);
+        if (override)
+            values->set_at(values, to, from + (to % stride));
+        else if (process != nullptr && size_t(to) < process->size())
+            values->set_at(process, to, to);
+        for (auto &config : m_object_configs) {
+            const ConfigOption *opt = config.second->option(key);
+            const auto          nil = nil_vectors().find(values->type());
+            if (nil == nil_vectors().end() || (!override && opt == nullptr))
+                continue;
+            auto *object_values = dynamic_cast<ConfigOptionVectorBase *>(opt ? opt->clone() : nil->second->clone());
+            object_values->resize(values->size());
+            if (override)
+                object_values->set_at(values, to, to);
+            else
+                object_values->set_at(nil->second, to, 0);
+            if (object_values->is_nil()) {
+                delete object_values;
+                config.second->erase(key);
+            } else
+                config.second->set_key_value(key, object_values);
+        }
+        m_all_keys.erase(std::remove(m_all_keys.begin(), m_all_keys.end(), id), m_all_keys.end());
+        if (override)
+            m_all_keys.push_back(id);
+    }
+    update_changed_ui();
+    for (auto &config : m_object_configs) {
         config.second->touch();
         notify_changed(config.first);
     }
@@ -9665,8 +9720,9 @@ Tab::ExtruderCopyColumns Tab::extruder_copy_columns()
 
 void Tab::link_extruder_edit(const std::string &opt_id)
 {
+    // A value set by the config manipulation follows from another edit, which was linked itself.
     if (m_extruder_link == nullptr || !m_extruder_link->GetValue() || m_active_page == nullptr || !variant_switch_active() ||
-        !extruder_sync_enabled())
+        !extruder_sync_enabled() || m_config_manipulation.is_applying())
         return;
     const auto n = opt_id.find('#');
     if (n == std::string::npos)
@@ -9675,25 +9731,31 @@ void Tab::link_extruder_edit(const std::string &opt_id)
     // The Extruder page's per-extruder settings (nozzle diameter, offset, ...) describe the hardware, so they stay as edited.
     if (is_printer_extruder_page(m_active_page) && printer_options_with_variant_1.count(key) == 0)
         return;
-    auto             *values = dynamic_cast<ConfigOptionVectorBase *>(m_config->option(key));
-    if (values == nullptr)
+    if (dynamic_cast<const ConfigOptionVectorBase *>(m_config->option(key)) == nullptr)
         return;
     const ExtruderCopyColumns copy = extruder_copy_columns();
     const int                 from = copy.position(key, copy.source);
     // Only the fields the switch points at its selection edit one column of many.
     if (from < 0 || m_active_page->get_field(key, from + 256) == nullptr)
         return;
-    bool copied = false;
+    std::vector<int> targets;
     for (int column : copy.columns) {
         const int to = copy.position(key, column);
-        if (column == copy.source || to < 0)
-            continue;
-        for (int s = 0; s < copy.stride; ++s)
-            values->set_at(values, to + s, from + s);
-        copied = true;
+        if (column != copy.source && to >= 0)
+            for (int s = 0; s < copy.stride; ++s)
+                targets.push_back(to + s);
     }
-    if (copied)
-        update_dirty();
+    if (!targets.empty())
+        apply_linked_edit(key, from, copy.stride, targets);
+}
+
+void Tab::apply_linked_edit(const std::string &key, int from, int stride, const std::vector<int> &targets)
+{
+    auto *values = dynamic_cast<ConfigOptionVectorBase *>(m_config->option(key));
+    // A column starts at a multiple of the stride, so to % stride is the value's place in its column.
+    for (int to : targets)
+        values->set_at(values, to, from + (to % stride));
+    update_dirty();
 }
 
 void Tab::sync_excluder()
