@@ -74,8 +74,9 @@ process that still has one column is given a column per extruder variant first
 
 ## Editing in the settings tabs
 
-The process and printer tabs have an extruder switch, the filament tab a variant
-switch. Its tags name the selection as the user sees it: "T2 HF" on the process
+The process and printer tabs have an extruder switch, shown as a drop-down list
+since a toolchanger has more tools than a row of buttons fits, and the filament
+tab a variant switch. Its tags name the selection as the user sees it: "T2 HF" on the process
 tab, "Extruder 2: HF" on the printer tab, "Direct Drive HF" on the filament tab,
 and the left and right nozzle names on Bambu dual-nozzle printers.
 `switch_excluder` points every per-variant field of the pages at the selected
@@ -111,16 +112,18 @@ everything. Only the ticked values are written.
 
 ## Editing all nozzles at once
 
-"Edit all nozzles", next to the per-nozzle icon of the process and printer
-tabs, makes an edit reach the other nozzles as it is made. One app setting,
-`link_nozzle_settings`, drives the box on both tabs and is off by default. With
+"Edit all nozzles", next to the per-nozzle icon of the process, printer,
+plate and object tabs, makes an edit reach the other nozzles as it is made. One
+app setting, `link_nozzle_settings`, drives the box on every tab and is off by
+default. With
 it on, an edited per-nozzle value is written to the columns the copy button
 would copy it to, so the same nozzle type rule applies. The printer's
 per-extruder settings, such as the nozzle diameter, describe the hardware and
 stay per extruder. Values that differ when the box is ticked are left alone:
-the copy button brings them in line. Object and plate settings, which edit
-their own copies of the process, and the filament tab, whose columns are
-nozzle types, have no such box.
+the copy button brings them in line. On the plate and object tabs the other
+columns become overrides of the selected objects too, and reverting the
+selected column drops them. The filament tab, whose columns are nozzle types,
+has no such box.
 
 ## Implementation and verification
 

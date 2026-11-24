@@ -1,5 +1,6 @@
 #include "SwitchButton.hpp"
 #include "Button.hpp"
+#include "ComboBox.hpp"
 #include "Label.hpp"
 #include "StaticBox.hpp"
 
@@ -14,6 +15,7 @@
 #include <wx/image.h>
 #include <cstring>
 #include <wx/dc.h>
+#include <algorithm>
 #include <cmath>
 #include <vector>
 #include "slic3r/GUI/Widgets/StateHandler.hpp"
@@ -24,6 +26,7 @@
 #include <wx/types.h>
 #include <wx/sizer.h>
 #include "../GUI_App.hpp"
+#include "libslic3r/Preset.hpp"
 #include "slic3r/GUI/I18N.hpp"
 #include "../Utils/MacDarkMode.hpp"
 #include "../Utils/WxFontUtils.hpp"
@@ -703,12 +706,26 @@ MultiSwitchButton::~MultiSwitchButton()
 
 int MultiSwitchButton::options_height() const
 {
+    if (m_dropdown)
+        return m_dropdown->GetBestSize().y;
     // With no button to measure yet, keep the placeholder height the switch starts with.
     return btns.empty() ? FromDIP(20) : btns.front()->GetMinSize().y;
 }
 
 void MultiSwitchButton::update_scroll_range()
 {
+    if (m_dropdown) {
+        // As wide as the longest option, plus room for the arrow and the borders.
+        int width = 0;
+        for (unsigned int i = 0; i < m_dropdown->GetCount(); ++i)
+            width = std::max(width, m_dropdown->GetTextExtent(m_dropdown->GetString(i)).x);
+        const wxSize size(width + FromDIP(40), options_height());
+        m_dropdown->SetMinSize(size);
+        SetMinSize(size);
+        SetMaxSize(m_fit_to_options ? wxSize(size.x, -1) : wxDefaultSize);
+        InvalidateBestSize();
+        return;
+    }
     // The scrollbar range is measured against the virtual size, so it has to follow the buttons
     // whenever their labels or count change.
     m_scroll->InvalidateBestSize();
@@ -738,6 +755,8 @@ int MultiSwitchButton::scrollbar_height(int options_width) const
 void MultiSwitchButton::on_size(wxSizeEvent &evt)
 {
     evt.Skip();
+    if (m_dropdown)
+        return;
 
     // The row resized, so the buttons may now overflow it (or no longer fit in it) and the room the
     // bar needs changed with that. Width does not depend on height, so this settles in one pass.
@@ -754,8 +773,46 @@ void MultiSwitchButton::on_size(wxSizeEvent &evt)
     }
 }
 
+void MultiSwitchButton::UseDropdown()
+{
+    if (m_dropdown)
+        return;
+    m_dropdown = new ComboBox(this, wxID_ANY, wxEmptyString, wxDefaultPosition, wxDefaultSize, 0, nullptr, wxCB_READONLY);
+    m_dropdown->SetFont(GetFont());
+    m_dropdown->Bind(wxEVT_COMBOBOX, [this](wxCommandEvent &) { SetSelection(m_dropdown->GetSelection()); });
+    SetCornerRadius(0);
+    m_scroll->Hide();
+    GetSizer()->Add(m_dropdown, 1, wxEXPAND);
+    update_dropdown();
+}
+
+void MultiSwitchButton::update_dropdown()
+{
+    if (!m_dropdown)
+        return;
+    // A modified option is named as a modified preset is.
+    const wxString suffix = from_u8(Slic3r::PresetCollection::get_suffix_modified());
+    // Renamed in place when the count holds: this also runs from the list's own selection event.
+    const bool rebuild = m_dropdown->GetCount() != btns.size();
+    if (rebuild)
+        m_dropdown->Clear();
+    for (size_t i = 0; i < btns.size(); ++i) {
+        const wxString label = btns[i]->GetLabel() + (btns_modified[i] ? suffix : wxString());
+        if (rebuild)
+            m_dropdown->Append(label);
+        else if (m_dropdown->GetString(i) != label)
+            m_dropdown->SetString(i, label);
+    }
+    if (m_dropdown->GetSelection() != sel)
+        m_dropdown->SetSelection(sel);
+    update_scroll_range();
+    Layout();
+}
+
 void MultiSwitchButton::scroll_option_into_view(Button *btn)
 {
+    if (m_dropdown)
+        return;
     const int width  = m_scroll->GetClientSize().x;
     const int view_x = m_scroll->GetViewStartPixels().x;
     if (width <= 0)     // not laid out yet: there is no view to scroll
@@ -804,6 +861,7 @@ void MultiSwitchButton::SetOptions(const std::vector<wxString> &options)
     for (const auto &option : options)
         AppendOption(option);
 
+    update_dropdown();
     update_scroll_range();
     Layout();
     Refresh();
@@ -869,6 +927,7 @@ void MultiSwitchButton::SetOptionText(unsigned int index, const wxString &text)
     if (index >= btns.size())
         return;
     btns[index]->SetLabel(text);
+    update_dropdown();
     update_scroll_range();
 }
 
@@ -892,6 +951,7 @@ void MultiSwitchButton::update_button_styles()
         btns[i]->SetTextColor(  btns_modified[i] ? m_fg_color_modified : m_text_color); 
         btns[i]->Refresh();
     }
+    update_dropdown();
 }
 
 void MultiSwitchButton::SetBackgroundColor(const StateColor &color)
@@ -935,6 +995,8 @@ void MultiSwitchButton::SetModified(int index, bool modified){
 
 void MultiSwitchButton::Rescale()
 {
+    if (m_dropdown)
+        m_dropdown->Rescale();
     for (auto *btn : btns) {
         btn->SetPaddingSize(FromDIP(m_button_padding));
         btn->Rescale();

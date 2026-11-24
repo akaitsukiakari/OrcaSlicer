@@ -548,6 +548,8 @@ public:
     };
     ExtruderCopyColumns extruder_copy_columns();
     void        link_extruder_edit(const std::string &opt_id);
+    // Writes the source value of an "Edit all nozzles" edit to the target positions.
+    virtual void apply_linked_edit(const std::string &key, int from, int stride, const std::vector<int> &targets);
 	void        parse_extruder_selection(int selection, int &extruder_id, NozzleVolumeType &nozzle_type);
     int         calculate_selection_index_for_extruder(int extruder_id, NozzleVolumeType nozzle_type);
 	std::vector<int> get_extruder_sync_targets(int extruder_id);
@@ -657,6 +659,8 @@ protected:
 	virtual void    notify_changed(ObjectBase * object) = 0;
 
 	virtual void	reload_config() override;
+
+	void            apply_linked_edit(const std::string &key, int from, int stride, const std::vector<int> &targets) override;
 
 	virtual void	update_custom_dirty(std::vector<std::string> &dirty_options, std::vector<std::string> &nonsys_options) override;
 
