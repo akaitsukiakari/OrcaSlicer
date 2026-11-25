@@ -762,8 +762,8 @@ void PartPlate::refresh_imex_layout_key()
     }
 }
 
-// Icon column slot of the plate notes icon; the summary icon follows it, then the IMEX mode icon.
-static int plate_notes_icon_slot(bool dual_bbl) { return dual_bbl ? 7 : 6; }
+// Icon column slot of the plate summary icon; the notes icon follows it, then the IMEX mode icon.
+static int plate_summary_icon_slot(bool dual_bbl) { return dual_bbl ? 7 : 6; }
 
 // Reposition the IMEX mode icon without requiring a full set_shape() rebuild.
 static void register_model_for_picking(GLCanvas3D &canvas, PickingModel &model, int id);
@@ -778,7 +778,7 @@ void PartPlate::refresh_imex_icon()
     bool dual_bbl = preset->is_bbl_vendor() && preset->get_printer_extruder_count() == 2;
     auto* is_imex_opt = preset->printers.get_edited_preset().config.option<ConfigOptionBool>("is_imex");
     if (is_imex_opt && is_imex_opt->value) {
-        int imex_slot = plate_notes_icon_slot(dual_bbl) + 2;
+        int imex_slot = plate_summary_icon_slot(dual_bbl) + 2;
         calc_vertex_for_icons(imex_slot, m_imex_mode_icon);
         calc_vertex_for_imex_warn_badge(imex_slot, m_imex_warn_icon);
 
@@ -5179,12 +5179,12 @@ bool PartPlate::set_shape(const Pointfs& shape, const Pointfs& exclude_areas, co
 			dual_bbl = (preset->is_bbl_vendor() && preset->get_printer_extruder_count() == 2);
 			calc_vertex_for_icons(dual_bbl ? 5 : 6, m_plate_filament_map_icon);
 			calc_vertex_for_icons(dual_bbl ? 6 : 5, m_move_front_icon);
-			calc_vertex_for_icons(plate_notes_icon_slot(dual_bbl), m_plate_notes_icon);
-			calc_vertex_for_icons(plate_notes_icon_slot(dual_bbl) + 1, m_plate_summary_icon);
+			calc_vertex_for_icons(plate_summary_icon_slot(dual_bbl), m_plate_summary_icon);
+			calc_vertex_for_icons(plate_summary_icon_slot(dual_bbl) + 1, m_plate_notes_icon);
 			{
 				auto* is_imex_opt = preset->printers.get_edited_preset().config.option<ConfigOptionBool>("is_imex");
 				if (is_imex_opt && is_imex_opt->value) {
-					int imex_slot = plate_notes_icon_slot(dual_bbl) + 2;
+					int imex_slot = plate_summary_icon_slot(dual_bbl) + 2;
 					calc_vertex_for_icons(imex_slot, m_imex_mode_icon);
 					calc_vertex_for_imex_warn_badge(imex_slot, m_imex_warn_icon);
 				}

@@ -805,7 +805,12 @@ PlateNotesDialog::PlateNotesDialog(wxWindow* parent, const wxString& notes)
     m_text->SetFont(Label::Body_14);
     sizer->Add(m_text, 1, wxEXPAND | wxALL, FromDIP(15));
 
-    auto* dlg_btns = new DialogButtons(this, {"OK", "Cancel"});
+    // Clear sits on the left, apart from OK and Cancel; it empties the box, and OK saves that.
+    auto* dlg_btns = new DialogButtons(this, {"Clear", "OK", "Cancel"}, "", 1);
+    dlg_btns->GetButtonFromID(wxID_CLEAR)->Bind(wxEVT_BUTTON, [this](wxCommandEvent&) {
+        m_text->Clear();
+        m_text->SetFocus();
+    });
     dlg_btns->GetOK()->Bind(wxEVT_BUTTON, [this](wxCommandEvent&) { EndModal(wxID_OK); });
     dlg_btns->GetCANCEL()->Bind(wxEVT_BUTTON, [this](wxCommandEvent&) { EndModal(wxID_CANCEL); });
     sizer->Add(dlg_btns, 0, wxEXPAND);
