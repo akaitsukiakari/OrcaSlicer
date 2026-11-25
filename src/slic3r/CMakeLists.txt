@@ -466,6 +466,8 @@ set(SLIC3R_GUI_SOURCES
     GUI/Plater.hpp
     GUI/PlateSettingsDialog.cpp
     GUI/PlateSettingsDialog.hpp
+    GUI/PlateSummaryDialog.cpp
+    GUI/PlateSummaryDialog.hpp
     GUI/PrebuildQueue.hpp
     GUI/Preferences.cpp
     GUI/Preferences.hpp

@@ -795,6 +795,41 @@ void PlateNameEditDialog::set_plate_name(const wxString &name) {
     m_ti_plate_name->GetTextCtrl()->SetInsertionPointEnd();
 }
 
+PlateNotesDialog::PlateNotesDialog(wxWindow* parent, const wxString& notes)
+    : DPIDialog(parent, wxID_ANY, _L("Plate Notes"), wxDefaultPosition, wxDefaultSize, wxDEFAULT_DIALOG_STYLE | wxRESIZE_BORDER)
+{
+    SetBackgroundColour(*wxWHITE);
+    auto* sizer = new wxBoxSizer(wxVERTICAL);
+
+    m_text = new wxTextCtrl(this, wxID_ANY, notes, wxDefaultPosition, wxSize(FromDIP(420), FromDIP(220)), wxTE_MULTILINE);
+    m_text->SetFont(Label::Body_14);
+    sizer->Add(m_text, 1, wxEXPAND | wxALL, FromDIP(15));
+
+    // Clear sits on the left, apart from OK and Cancel; it empties the box, and OK saves that.
+    auto* dlg_btns = new DialogButtons(this, {"Clear", "OK", "Cancel"}, "", 1);
+    dlg_btns->GetButtonFromID(wxID_CLEAR)->Bind(wxEVT_BUTTON, [this](wxCommandEvent&) {
+        m_text->Clear();
+        m_text->SetFocus();
+    });
+    dlg_btns->GetOK()->Bind(wxEVT_BUTTON, [this](wxCommandEvent&) { EndModal(wxID_OK); });
+    dlg_btns->GetCANCEL()->Bind(wxEVT_BUTTON, [this](wxCommandEvent&) { EndModal(wxID_CANCEL); });
+    sizer->Add(dlg_btns, 0, wxEXPAND);
+
+    SetSizerAndFit(sizer);
+    CenterOnParent();
+    wxGetApp().UpdateDlgDarkUI(this);
+    m_text->SetFocus();
+    m_text->SetInsertionPointEnd();
+}
+
+wxString PlateNotesDialog::get_notes() const { return m_text->GetValue(); }
+
+void PlateNotesDialog::on_dpi_changed(const wxRect& /*suggested_rect*/)
+{
+    Fit();
+    Refresh();
+}
+
 
 }
 } // namespace Slic3r::GUI

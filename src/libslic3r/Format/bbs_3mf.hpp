@@ -117,6 +117,7 @@ struct PlateData
     std::string     gcode_weight;
     std::string     first_layer_time;
     std::string     plate_name;
+    std::string     plate_notes; // Orca fork: free-text notes, "orca:plate_notes" plate metadata
     std::vector<FilamentInfo> slice_filaments_info;
     // Mixed (virtual) filaments used by this plate; empty when no mixed filament is used.
     std::vector<PlateMixedFilamentInfo> mixed_filaments_info;
