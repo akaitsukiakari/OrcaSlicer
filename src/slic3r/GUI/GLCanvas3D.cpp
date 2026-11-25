@@ -8609,7 +8609,8 @@ bool GLCanvas3D::_init_assemble_view_toolbar()
     item.name = "assembly_view";
     item.icon_filename = m_is_dark ? "toolbar_assemble_dark.svg" : "toolbar_assemble.svg";
     item.tooltip = _utf8(L("Assembly View"));
-    item.sprite_id = 1;
+    // The row of this item's icon in the toolbar texture, which stacks the icons in item order.
+    item.sprite_id = 0;
     item.left.toggable = false;
     item.left.action_callback = [this]() { if (m_canvas != nullptr) wxPostEvent(m_canvas, SimpleEvent(EVT_GLVIEWTOOLBAR_ASSEMBLE)); };
     item.left.render_callback = GLToolbarItem::Default_Render_Callback;
@@ -8618,6 +8619,16 @@ bool GLCanvas3D::_init_assemble_view_toolbar()
     item.enabling_callback = []()->bool {
         return wxGetApp().plater()->has_assmeble_view();
     };
+    if (!m_assemble_view_toolbar.add_item(item))
+        return false;
+
+    item.name = "object_summary";
+    item.icon_filename = m_is_dark ? "toolbar_object_summary_dark.svg" : "toolbar_object_summary.svg";
+    item.tooltip = _utf8(L("Object summary"));
+    item.sprite_id = 1;
+    // Opened after the click returns: a modal dialog must not run inside the canvas mouse handler.
+    item.left.action_callback = []() { wxGetApp().CallAfter([]() { wxGetApp().plater()->show_summary_dialog(true); }); };
+    item.enabling_callback = []() -> bool { return wxGetApp().plater()->get_selection().get_object_idx() >= 0; };
     if (!m_assemble_view_toolbar.add_item(item))
         return false;
 

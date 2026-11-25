@@ -801,6 +801,10 @@ public:
     bool can_delete_plate() const;
     // Undoable rename; use for user edits instead of PartPlate::set_plate_name().
     void rename_plate(int plate_index, const std::string& name);
+    // Undoable edit of a plate's notes.
+    void set_plate_notes(int plate_index, const std::string& notes);
+    // Shows the summary of the current plate, or of the selected object.
+    void show_summary_dialog(bool object_view);
     bool can_increase_instances() const;
     bool can_decrease_instances() const;
     bool can_set_instance_to_object() const;

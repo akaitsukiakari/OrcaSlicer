@@ -299,6 +299,7 @@
 #include "PhysicalPrinterDialog.hpp"
 #include "PrintHostDialogs.hpp"
 #include "PlateSettingsDialog.hpp"
+#include "PlateSummaryDialog.hpp"
 #include "DailyTips.hpp"
 #include "CreatePresetsDialog.hpp"
 #include "FileArchiveDialog.hpp"
@@ -24256,6 +24257,26 @@ int Plater::select_plate_by_hover_id(int hover_id, bool right_click, bool isModi
         update();
         p->partplate_list.select_plate(0);
     }
+    else if ((action == (int)PartPlate::PLATE_NOTES_ID) && (!right_click)) {
+        ret = select_plate(plate_index);
+        if (!ret) {
+            PlateNotesDialog dlg(this, from_u8(p->partplate_list.get_curr_plate()->get_notes()));
+            if (dlg.ShowModal() == wxID_OK)
+                set_plate_notes(p->partplate_list.get_curr_plate_index(), dlg.get_notes().ToUTF8().data());
+        } else {
+            BOOST_LOG_TRIVIAL(error) << __FUNCTION__ << "can not select plate %1%" << plate_index;
+            ret = -1;
+        }
+    }
+    else if ((action == (int)PartPlate::PLATE_SUMMARY_ID) && (!right_click)) {
+        ret = select_plate(plate_index);
+        if (!ret)
+            show_summary_dialog(false);
+        else {
+            BOOST_LOG_TRIVIAL(error) << __FUNCTION__ << "can not select plate %1%" << plate_index;
+            ret = -1;
+        }
+    }
     else if (action == (int)PartPlate::PLATE_IMEX_MODE_ID)
     {
         ret = select_plate(plate_index);
@@ -24705,6 +24726,27 @@ void Plater::rename_plate(int plate_index, const std::string& name)
         else
             p->schedule_auto_reslice_if_needed();
     }
+}
+
+void Plater::set_plate_notes(int plate_index, const std::string& notes)
+{
+    PartPlate* plate = p->partplate_list.get_plate(plate_index);
+    if (plate == nullptr || plate->get_notes() == notes)
+        return;
+
+    take_snapshot(_u8L("Edit Plate Notes"));
+    plate->set_notes(notes);
+    // Notes don't affect slicing, so the slice result stays valid.
+    set_plater_dirty(true);
+    get_current_canvas3D()->set_as_dirty();
+}
+
+void Plater::show_summary_dialog(bool object_view)
+{
+    const Selection& selection = get_selection();
+    const int        obj_idx   = selection.get_object_idx();
+    PlateSummaryDialog dlg(this, object_view, p->partplate_list.get_curr_plate_index(), obj_idx);
+    dlg.ShowModal();
 }
 
 bool Plater::can_increase_instances() const { return p->can_increase_instances(); }

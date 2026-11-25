@@ -17,6 +17,7 @@
 #include "slic3r/GUI/GUI_Utils.hpp"
 #include <wx/stattext.h>
 #include <wx/string.h>
+#include <wx/textctrl.h>
 #include <wx/toplevel.h>
 #include "libslic3r/PrintConfig.hpp"
 #include <utility>
@@ -210,6 +211,20 @@ public:
 
 protected:
     TextInput *m_ti_plate_name;
+};
+
+// Edits a plate's free-text notes.
+class PlateNotesDialog : public DPIDialog
+{
+public:
+    PlateNotesDialog(wxWindow* parent, const wxString& notes);
+
+    wxString get_notes() const;
+
+protected:
+    void on_dpi_changed(const wxRect& suggested_rect) override;
+
+    wxTextCtrl* m_text { nullptr };
 };
 }} // namespace Slic3r::GUI
 

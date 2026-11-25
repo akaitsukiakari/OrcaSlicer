@@ -210,6 +210,8 @@ private:
     PickingModel m_plate_filament_map_icon;
     PickingModel m_plate_name_edit_icon;
     PickingModel m_move_front_icon;
+    PickingModel m_plate_notes_icon;
+    PickingModel m_plate_summary_icon;
     PickingModel m_imex_mode_icon;
     GLModel      m_imex_warn_icon;   // warning badge: IMEX parallel mode + multi-material conflict
     GLModel m_plate_idx_icon;
@@ -227,6 +229,8 @@ private:
     // SoftFever
     // part plate name
     std::string m_name;
+    // Free-text notes shown in the notes icon's tooltip; saved in the 3MF.
+    std::string m_notes;
     GLModel m_plate_name_icon;
     GLTexture m_name_texture;
     wxCoord m_name_texture_width;
@@ -303,7 +307,9 @@ public:
     static constexpr unsigned int PLATE_NAME_HOVER_ID = 6;
     static constexpr unsigned int PLATE_FILAMENT_MAP_ID = 8;
     static constexpr unsigned int PLATE_IMEX_MODE_ID = 9;
-    static constexpr unsigned int GRABBER_COUNT = 10;
+    static constexpr unsigned int PLATE_NOTES_ID = 10;
+    static constexpr unsigned int PLATE_SUMMARY_ID = 11;
+    static constexpr unsigned int GRABBER_COUNT = 12;
 
     // Sentinel encoded into GLVolume::composite_id.object_id for IMEX ghost volumes.
     // Real object_ids are small non-negative ints, so a large-negative base is unambiguous.
@@ -466,6 +472,9 @@ public:
     void generate_plate_name_texture();
     //set the plate's name
     void set_plate_name(const std::string& name);
+
+    const std::string& get_notes() const { return m_notes; }
+    void set_notes(const std::string& notes) { m_notes = notes; }
 
     void set_timelapse_warning_code(int code) { m_timelapse_warning_code = code; }
     int  timelapse_warning_code() { return m_timelapse_warning_code; }
@@ -752,7 +761,7 @@ public:
         std::vector<std::pair<int, int>>	objects_and_instances;
         std::vector<std::pair<int, int>>	instances_outside;
 
-        ar(m_plate_index, m_name, m_print_index, m_origin, m_width, m_depth, m_height, m_locked, m_selected, m_ready_for_slice, m_slice_result_valid, m_apply_invalid, m_printable, m_tmp_gcode_path, objects_and_instances, instances_outside, m_config);
+        ar(m_plate_index, m_name, m_print_index, m_origin, m_width, m_depth, m_height, m_locked, m_selected, m_ready_for_slice, m_slice_result_valid, m_apply_invalid, m_printable, m_tmp_gcode_path, objects_and_instances, instances_outside, m_config, m_notes);
 
         for (std::vector<std::pair<int, int>>::iterator it = objects_and_instances.begin(); it != objects_and_instances.end(); ++it)
             obj_to_instance_set.insert(std::pair(it->first, it->second));
@@ -772,7 +781,7 @@ public:
         for (std::set<std::pair<int, int>>::iterator it = obj_to_instance_set.begin(); it != obj_to_instance_set.end(); ++it)
             objects_and_instances.emplace_back(it->first, it->second);
 
-        ar(m_plate_index, m_name, m_print_index, m_origin, m_width, m_depth, m_height, m_locked, m_selected, m_ready_for_slice, m_slice_result_valid, m_apply_invalid, m_printable, m_tmp_gcode_path, objects_and_instances, instances_outside, m_config);
+        ar(m_plate_index, m_name, m_print_index, m_origin, m_width, m_depth, m_height, m_locked, m_selected, m_ready_for_slice, m_slice_result_valid, m_apply_invalid, m_printable, m_tmp_gcode_path, objects_and_instances, instances_outside, m_config, m_notes);
     }
     /*template<class Archive> void serialize(Archive& ar)
     {
@@ -836,6 +845,12 @@ class PartPlateList : public ObjectBase
     GLTexture m_plate_set_filament_map_hovered_texture;
     GLTexture m_plate_name_edit_texture;
     GLTexture m_plate_name_edit_hovered_texture;
+    GLTexture m_plate_notes_texture;
+    GLTexture m_plate_notes_hovered_texture;
+    GLTexture m_plate_notes_changed_texture;
+    GLTexture m_plate_notes_changed_hovered_texture;
+    GLTexture m_plate_summary_texture;
+    GLTexture m_plate_summary_hovered_texture;
     std::array<GLTexture, 4> m_imex_mode_textures;          // indexed by ImexModeKind
     std::array<GLTexture, 4> m_imex_mode_hovered_textures;
     GLTexture m_imex_warn_texture;  // warning badge for IMEX + multi-material conflict

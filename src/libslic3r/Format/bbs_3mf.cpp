@@ -408,6 +408,8 @@ static constexpr const char* INSTANCEID_ATTR = "instance_id";
 static constexpr const char* IDENTIFYID_ATTR = "identify_id";
 static constexpr const char* PLATERID_ATTR = "plater_id";
 static constexpr const char* PLATER_NAME_ATTR = "plater_name";
+// Free-text plate notes. A plate metadata key other slicers skip.
+static constexpr const char* PLATE_NOTES_KEY = "orca:plate_notes";
 static constexpr const char* PLATE_IDX_ATTR = "index";
 static constexpr const char* PRINTER_MODEL_ID_ATTR = "printer_model_id";
 static constexpr const char* EXTRUDER_TYPE_ATTR = "extruder_type";
@@ -2457,6 +2459,7 @@ void PlateData::parse_filament_info(GCodeProcessorResult *result)
             plate_data_list[it->first-1]->locked = it->second->locked;
             plate_data_list[it->first-1]->plate_index = it->second->plate_index-1;
             plate_data_list[it->first-1]->plate_name = it->second->plate_name;
+            plate_data_list[it->first-1]->plate_notes = it->second->plate_notes;
             plate_data_list[it->first-1]->obj_inst_map = it->second->obj_inst_map;
             plate_data_list[it->first-1]->gcode_file = (m_load_restore || it->second->gcode_file.empty()) ? it->second->gcode_file : m_backup_path + "/" + it->second->gcode_file;
             plate_data_list[it->first-1]->gcode_prediction = it->second->gcode_prediction;
@@ -4656,6 +4659,10 @@ void PlateData::parse_filament_info(GCodeProcessorResult *result)
             }
             else if (key == PLATER_NAME_ATTR) {
                 m_curr_plater->plate_name = xml_unescape(value.c_str());
+            }
+            else if (key == PLATE_NOTES_KEY) {
+                // The parser already decoded the attribute, line breaks included.
+                m_curr_plater->plate_notes = value;
             }
             else if (key == LOCK_ATTR)
             {
@@ -8529,6 +8536,9 @@ bool _BBS_3MF_Exporter::_add_model_config_file_to_archive(mz_zip_archive& archiv
                 //plate index
                 stream << "    <" << METADATA_TAG << " " << KEY_ATTR << "=\"" << PLATERID_ATTR << "\" " << VALUE_ATTR << "=\"" << plate_data->plate_index + 1 << "\"/>\n";
                 stream << "    <" << METADATA_TAG << " " << KEY_ATTR << "=\"" << PLATER_NAME_ATTR << "\" " << VALUE_ATTR << "=\"" <<  xml_escape(plate_data->plate_name.c_str()) << "\"/>\n";
+                // Line breaks are escaped so attribute normalization keeps them.
+                if (!plate_data->plate_notes.empty())
+                    stream << "    <" << METADATA_TAG << " " << KEY_ATTR << "=\"" << PLATE_NOTES_KEY << "\" " << VALUE_ATTR << "=\"" << xml_escape_double_quotes_attribute_value(plate_data->plate_notes) << "\"/>\n";
                 stream << "    <" << METADATA_TAG << " " << KEY_ATTR << "=\"" << LOCK_ATTR << "\" " << VALUE_ATTR << "=\"" << std::boolalpha<< plate_data->locked<< "\"/>\n";
                 ConfigOption* bed_type_opt = plate_data->config.option("curr_bed_type");
                 t_config_enum_names bed_type_names = ConfigOptionEnum<BedType>::get_enum_names();

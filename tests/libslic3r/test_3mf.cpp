@@ -696,6 +696,46 @@ TEST_CASE("A slicer that does not know the arrange lock skips it as an unknown o
     CHECK(std::find(ctxt.unrecogized_keys.begin(), ctxt.unrecogized_keys.end(), "orca:arrange_lock") != ctxt.unrecogized_keys.end());
 }
 
+TEST_CASE("A plate's notes keep their line breaks and special characters through a project round trip", "[3mf]")
+{
+    const std::string notes = GENERATE(std::string(""), std::string("Use the smooth plate"),
+                                       std::string("Line one\nLine \"two\" & <three>\n\tIndented"));
+    ScopedSlic3rTemporaryDir temporary_dir("orca_plate_notes");
+    Model        model;
+    ModelObject* object = model.add_object();
+    object->add_volume(make_cube(10., 10., 10.));
+    object->add_instance();
+    model.set_backup_path((temporary_dir.path() / "source_backup").string());
+
+    const std::string path = (temporary_dir.path() / "plate_notes.3mf").string();
+    DynamicPrintConfig config;
+    auto plate = std::make_unique<PlateData>();
+    plate->plate_index = 0;
+    plate->plate_notes = notes;
+    StoreParams store_params;
+    store_params.path     = path.c_str();
+    store_params.model    = &model;
+    store_params.config   = &config;
+    store_params.plate_data_list.push_back(plate.get());
+    store_params.strategy = SaveStrategy::Zip64 | SaveStrategy::Silence;
+    REQUIRE(store_bbs_3mf(store_params));
+
+    Model                     reloaded_model;
+    DynamicPrintConfig        reloaded;
+    ConfigSubstitutionContext substitutions{ForwardCompatibilitySubstitutionRule::Disable};
+    PlateDataPtrs             reloaded_plates;
+    std::vector<Preset *>     project_presets;
+    bool                      is_bbl_3mf  = false;
+    bool                      is_orca_3mf = false;
+    Semver                    file_version;
+    const bool loaded = load_bbs_3mf(path.c_str(), &reloaded, &substitutions, &reloaded_model, &reloaded_plates, &project_presets,
+                                     &is_bbl_3mf, &is_orca_3mf, &file_version, nullptr, LoadStrategy::LoadModel | LoadStrategy::LoadConfig);
+    REQUIRE(loaded);
+    REQUIRE(reloaded_plates.size() == 1);
+    CHECK(reloaded_plates.front()->plate_notes == notes);
+    release_PlateData_list(reloaded_plates);
+}
+
 TEST_CASE("A plate's G-code statistics are stored next to its G-code", "[3mf]")
 {
     const bool with_statistics = GENERATE(false, true);
