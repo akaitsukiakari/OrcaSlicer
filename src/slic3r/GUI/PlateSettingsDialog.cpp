@@ -14,6 +14,10 @@
 #include <algorithm>
 #include <cstdlib>
 #include <wx/textctrl.h>
+#include <wx/clipbrd.h>
+#include <wx/dataobj.h>
+#include <cctype>
+#include <cstdint>
 #include <string>
 #include <wx/panel.h>
 #include "slic3r/GUI/wxExtensions.hpp"
@@ -795,6 +799,115 @@ void PlateNameEditDialog::set_plate_name(const wxString &name) {
     m_ti_plate_name->GetTextCtrl()->SetInsertionPointEnd();
 }
 
+namespace {
+
+// Plain text of a pasted HTML fragment, keeping its line breaks and turning list items into
+// "• " lines (numbered for ordered lists, indented when nested), which plain-text paste drops.
+std::string html_to_plain_text(const std::string& html)
+{
+    std::string src = html;
+    // A Windows clipboard fragment is marked; the rest is document boilerplate.
+    const size_t frag_begin = src.find("<!--StartFragment-->");
+    const size_t frag_end   = src.find("<!--EndFragment-->");
+    if (frag_begin != std::string::npos && frag_end != std::string::npos && frag_end > frag_begin)
+        src = src.substr(frag_begin + 20, frag_end - frag_begin - 20);
+
+    std::string      out;
+    std::vector<int> lists; // per open list: -1 for <ul>, else the next number of an <ol>
+    bool             in_pre = false;
+    // Ends the current line; block tags end it once, however many of them meet, while <br> always adds one.
+    auto newline = [&out](bool hard = false) {
+        while (!out.empty() && out.back() == ' ')
+            out.pop_back();
+        if (hard || (!out.empty() && out.back() != '\n'))
+            out += '\n';
+    };
+    for (size_t i = 0; i < src.size();) {
+        const char c = src[i];
+        if (c == '<') {
+            const size_t close = src.find('>', i);
+            if (close == std::string::npos)
+                break;
+            std::string tag = src.substr(i + 1, close - i - 1);
+            i = close + 1;
+            const bool end = !tag.empty() && tag[0] == '/';
+            std::string name;
+            for (size_t k = end ? 1 : 0; k < tag.size() && std::isalnum(static_cast<unsigned char>(tag[k])); ++k)
+                name += char(std::tolower(static_cast<unsigned char>(tag[k])));
+            if (!end && (name == "script" || name == "style")) {
+                const size_t skip = src.find("</" + name, i);
+                i = skip == std::string::npos ? src.size() : skip;
+            } else if (name == "ul" || name == "ol") {
+                if (end) {
+                    if (!lists.empty())
+                        lists.pop_back();
+                } else
+                    lists.push_back(name == "ul" ? -1 : 1);
+                newline();
+            } else if (name == "li" && !end) {
+                newline();
+                out += std::string(2 * (lists.empty() ? 0 : lists.size() - 1), ' ');
+                if (!lists.empty() && lists.back() > 0)
+                    out += std::to_string(lists.back()++) + ". ";
+                else
+                    out += "\xE2\x80\xA2 "; // U+2022 bullet
+            } else if (name == "pre")
+                in_pre = !end;
+            else if (name == "br")
+                newline(true);
+            else if (name == "p" || name == "div" || name == "tr" || name == "li" || name == "blockquote" ||
+                     (name.size() == 2 && name[0] == 'h' && name[1] >= '1' && name[1] <= '6'))
+                newline();
+            continue;
+        }
+        if (c == '&') {
+            const size_t semi = src.find(';', i);
+            if (semi != std::string::npos && semi - i <= 10) {
+                const std::string entity = src.substr(i + 1, semi - i - 1);
+                uint32_t          code   = 0;
+                if (entity == "amp") code = '&';
+                else if (entity == "lt") code = '<';
+                else if (entity == "gt") code = '>';
+                else if (entity == "quot") code = '"';
+                else if (entity == "apos") code = '\'';
+                else if (entity == "nbsp") code = ' ';
+                else if (entity.size() > 1 && entity[0] == '#')
+                    code = uint32_t(std::strtoul(entity.c_str() + ((entity[1] == 'x' || entity[1] == 'X') ? 2 : 1), nullptr,
+                                                 (entity[1] == 'x' || entity[1] == 'X') ? 16 : 10));
+                if (code != 0) {
+                    out += wxString(wxUniChar(code)).ToUTF8().data();
+                    i = semi + 1;
+                    continue;
+                }
+            }
+        }
+        if (!in_pre && (c == '\r' || c == '\n' || c == '\t' || c == ' ')) {
+            // HTML collapses whitespace; line breaks come from the tags.
+            if (!out.empty() && out.back() != ' ' && out.back() != '\n')
+                out += ' ';
+        } else if (c != '\r')
+            out += c;
+        ++i;
+    }
+
+    // Drop runs of more than one empty line, and leading and trailing blank lines.
+    std::string result;
+    int         newlines = 0;
+    for (char c : out) {
+        if (c == '\n') {
+            if (++newlines > 2)
+                continue;
+        } else
+            newlines = 0;
+        result += c;
+    }
+    const size_t first = result.find_first_not_of(" \n");
+    const size_t last  = result.find_last_not_of(" \n");
+    return first == std::string::npos ? std::string() : result.substr(first, last - first + 1);
+}
+
+} // namespace
+
 PlateNotesDialog::PlateNotesDialog(wxWindow* parent, const wxString& notes)
     : DPIDialog(parent, wxID_ANY, _L("Plate Notes"), wxDefaultPosition, wxDefaultSize, wxDEFAULT_DIALOG_STYLE | wxRESIZE_BORDER)
 {
@@ -804,6 +917,38 @@ PlateNotesDialog::PlateNotesDialog(wxWindow* parent, const wxString& notes)
     m_text = new wxTextCtrl(this, wxID_ANY, notes, wxDefaultPosition, wxSize(FromDIP(420), FromDIP(220)), wxTE_MULTILINE);
     m_text->SetFont(Label::Body_14);
     sizer->Add(m_text, 1, wxEXPAND | wxALL, FromDIP(15));
+    // Paste the clipboard ourselves: the native paste can lose line breaks (text with bare LF line ends)
+    // and drops list bullets, which a copied web page or document holds only in its HTML.
+    m_text->Bind(wxEVT_TEXT_PASTE, [this](wxClipboardTextEvent& e) {
+        wxClipboardLocker lock;
+        if (!lock) {
+            e.Skip();
+            return;
+        }
+        wxString text;
+        if (wxTheClipboard->IsSupported(wxDF_HTML)) {
+            wxHTMLDataObject html;
+            if (wxTheClipboard->GetData(html)) {
+                const std::string source = html.GetHTML().ToUTF8().data();
+                // Use the HTML only for lists; otherwise the plain text is as good and keeps spacing exactly.
+                if (source.find("<li") != std::string::npos || source.find("<LI") != std::string::npos)
+                    text = wxString::FromUTF8(html_to_plain_text(source));
+            }
+        }
+        if (text.empty() && wxTheClipboard->IsSupported(wxDF_UNICODETEXT)) {
+            wxTextDataObject plain;
+            if (wxTheClipboard->GetData(plain))
+                text = plain.GetText();
+        }
+        if (text.empty()) {
+            e.Skip();
+            return;
+        }
+        text.Replace("\r\n", "\n");
+        text.Replace("\r", "\n");
+        // WriteText converts the line ends to what the native control needs.
+        m_text->WriteText(text);
+    });
 
     // Clear sits on the left, apart from OK and Cancel; it empties the box, and OK saves that.
     auto* dlg_btns = new DialogButtons(this, {"Clear", "OK", "Cancel"}, "", 1);
