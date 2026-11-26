@@ -2667,6 +2667,7 @@ static const ImWchar ranges_language_independent[] =
     0x0370, 0x03FF, // Greek and Coptic
     0x0400, 0x04FF, // Cyrillic
     0x1E00, 0x1EFF, // Latin Extended Additional (Vietnamese)
+    0x2000, 0x206F, // General Punctuation: bullets, dashes and curly quotes in pasted plate notes
     0,
 };
 
